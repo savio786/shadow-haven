@@ -12,14 +12,15 @@ import type { Env } from "./worker";
 import {
   BOT_NAMES, CHAT_MAX, DISCUSS_MS, FIRST_SNUFF_MS, GATHER_MS, LANTERNS, MAX_PLAYERS, MIN_PLAYERS,
   MOVE_COOLDOWN_MS, NAME_MAX, RESULT_MS, REVEAL_MS, SHAPES, SNUFF_COOLDOWN_MS, VOTE_MS, shadeCount,
-  type ChatLine, type ClientMsg, type GameResult, type Meeting, type Phase, type PublicPlayer, type PublicTask,
-  type Role, type ServerMsg,
+  type ChatLine, type ClientMsg, type GameResult, type MatchEvent, type Meeting, type Phase, type PlayerSummary,
+  type PublicPlayer, type PublicTask, type Role, type ServerMsg,
 } from "./shared";
 import { PATHS, START, adjacent, isLoc, type Loc } from "./harbor";
 import { chooseReport, chooseSnuff, decide, foundCold, newBrain, observe, remember, type Brain } from "./bots";
 import { TASKS, assignTasks, checkAnswer, makeChallenge, type Attempt, type Task } from "./tasks";
 import { chooseVote, mentions, tally, type MindContext } from "./minds";
-import { AiGate, DEFAULT_MODEL, speak } from "./ai";
+import { AiGate, DEFAULT_MODEL, speak, write } from "./ai";
+import { cleanTale, computeHonors, fallbackTale, taleFacts, talePrompt } from "./chronicle";
 
 interface Player {
   id: string;
@@ -38,11 +39,22 @@ interface Player {
   adrift?: boolean;              // set adrift by vote
   bellUsed?: boolean;            // rang the emergency bell this game
   lastSaidAt?: number;
+  stats?: PlayerStats;           // this game only
+  snuffedAt?: Loc | null;
   snuffReadyAt: number;          // Shades: can't snuff again before this
   attempt?: Attempt;             // a task mini-game in progress (humans)
   brain?: Brain;                 // bots only
   working?: { loc: Loc; until: number }; // a bot busy on a task
 }
+
+interface PlayerStats {
+  tasks: number;   // real tasks done
+  snuffs: number;
+  sharp: number;   // votes cast for a Shade
+  lamp: boolean;   // lit the great lamp while alive
+}
+
+const freshStats = (): PlayerStats => ({ tasks: 0, snuffs: 0, sharp: 0, lamp: false });
 
 interface RoomState {
   code: string;
@@ -58,6 +70,9 @@ interface RoomState {
   revealed: string[];            // snuffed players everyone has been told about
   votes: Record<string, string>; // secret until the verdict: voter → target or "skip"
   chatSeq: number;
+  log: MatchEvent[];             // what happened this game, for the end screen
+  gameNo: number;
+  startedAt: number;             // when play began (after the reveal)
 }
 
 interface ColdLantern {
@@ -71,6 +86,7 @@ function emptyRoom(): RoomState {
   return {
     code: "", created: false, createdAt: 0, phase: "lobby", hostId: null, players: [],
     revealEndsAt: null, result: null, cold: [], meeting: null, revealed: [], votes: {}, chatSeq: 0,
+    log: [], gameNo: 0, startedAt: 0,
   };
 }
 
@@ -193,6 +209,7 @@ export class Room extends DurableObject<Env> {
       case "removePlayer": return this.onRemove(ws, me, msg.id);
       case "start": return this.onStart(ws, me);
       case "endGame": return this.onEndGame(ws, me);
+      case "playAgain": return this.onPlayAgain(ws, me);
       case "move": return this.onMove(ws, me, msg.to);
       case "taskStart": return this.onTaskStart(ws, me, msg.id);
       case "taskDone": return this.onTaskDone(ws, me, msg);
@@ -405,7 +422,25 @@ export class Room extends DurableObject<Env> {
     if (this.state.players.length < MIN_PLAYERS) {
       return this.send(ws, { t: "error", code: "not_enough", text: `Need at least ${MIN_PLAYERS} Keepers — add bots to fill seats.` });
     }
+    await this.startGame();
+  }
 
+  /** Same players, fresh roles, straight back in. Anyone who has left is let go first. */
+  private async onPlayAgain(ws: WebSocket, me: Player) {
+    if (!this.requireHost(ws, me)) return;
+    if (this.state.phase !== "ended") return;
+    this.state.players = this.state.players.filter((p) => p.isBot || this.isConnected(p.id));
+    if (this.state.players.length < MIN_PLAYERS) {
+      this.resetToLobby();
+      await this.save();
+      this.broadcast({ t: "notice", text: `Some Keepers left — add bots or invite friends to reach ${MIN_PLAYERS}.` });
+      this.broadcastLobby();
+      return;
+    }
+    await this.startGame();
+  }
+
+  private async startGame() {
     // Pick the Shades uniformly at random from everyone, bots included.
     const order = shuffle(this.state.players.map((p) => p.id));
     const shades = new Set(order.slice(0, shadeCount(this.state.players.length)));
@@ -420,10 +455,16 @@ export class Room extends DurableObject<Env> {
       p.adrift = false;
       p.bellUsed = false;
       p.snuffReadyAt = playFrom + FIRST_SNUFF_MS;
+      p.stats = freshStats();
+      p.snuffedAt = null;
       delete p.attempt;
       delete p.working;
       if (p.isBot) p.brain = newBrain(playFrom);
     }
+    this.state.log = [];
+    this.state.gameNo += 1;
+    this.state.startedAt = playFrom;
+    this.state.votes = {};
 
     this.state.phase = "reveal";
     this.state.result = null;
@@ -448,6 +489,15 @@ export class Room extends DurableObject<Env> {
   private async onEndGame(ws: WebSocket, me: Player) {
     if (!this.requireHost(ws, me)) return;
     if (this.state.phase === "lobby") return;
+    const wasPlaying = this.state.phase !== "ended";
+    this.resetToLobby();
+    await this.save();
+    this.broadcast({ t: "notice", text: wasPlaying ? "The host called everyone back to the lobby." : "Back in the lobby. Ready for another night?" });
+    this.broadcastLobby();
+    await this.scheduleAlarm();
+  }
+
+  private resetToLobby() {
     this.state.phase = "lobby";
     this.state.revealEndsAt = null;
     this.state.result = null;
@@ -466,11 +516,8 @@ export class Room extends DurableObject<Env> {
       delete p.attempt;
       delete p.working;
       delete p.brain;
+      delete p.stats;
     }
-    await this.save();
-    this.broadcast({ t: "notice", text: "The host called everyone back to the lobby." });
-    this.broadcastLobby();
-    await this.scheduleAlarm();
   }
 
   private async onMove(ws: WebSocket, me: Player, to: unknown) {
@@ -632,6 +679,9 @@ export class Room extends DurableObject<Env> {
     delete victim.attempt;
     delete victim.working;
     shade.snuffReadyAt = now + SNUFF_COOLDOWN_MS;
+    victim.snuffedAt = loc;
+    if (shade.stats) shade.stats.snuffs++;
+    this.logEvent({ kind: "snuff", who: shade.id, victim: victim.id, loc });
     this.state.cold.push({ victim: victim.id, by: shade.id, loc, at: now });
     this.dirty = true;
 
@@ -697,6 +747,9 @@ export class Room extends DurableObject<Env> {
       result: null,
     };
     s.revealed = s.meeting.snuffed;
+    this.logEvent(kind === "bell"
+      ? { kind: "bell", who: reporter.id, loc }
+      : { kind: "report", who: reporter.id, loc, found: s.meeting.found });
     // Bots that find out now who was found note who they saw nearby.
     for (const c of s.cold.filter((c) => c.loc === loc)) {
       for (const p of s.players) if (p.brain && p.alive && p.loc === loc) foundCold(p.brain, c.loc, c.victim, now, p.id);
@@ -912,6 +965,11 @@ export class Room extends DurableObject<Env> {
       if (!s.revealed.includes(who.id)) s.revealed = [...s.revealed, who.id];
     }
     m.result = { adrift: who?.id ?? null, wasShade: who ? who.role === "shade" : null, votes: { ...s.votes }, tie };
+    for (const [voter, target] of Object.entries(s.votes)) {
+      const v = this.player(voter);
+      if (v?.stats && this.player(target)?.role === "shade") v.stats.sharp++;
+    }
+    this.logEvent(who ? { kind: "adrift", who: who.id, wasShade: who.role === "shade" } : { kind: "spared" });
     this.botVotes = [];
     this.botTurns = [];
     this.setStage("result", now + RESULT_MS);
@@ -991,6 +1049,8 @@ export class Room extends DurableObject<Env> {
     this.dirty = true;
     const real = p.role === "keeper";
     const def = TASKS[task.loc];
+    if (real && p.stats) p.stats.tasks++;
+    if (real && def.witnessed && p.alive && p.stats) p.stats.lamp = true;
     if (real && def.witnessed && p.alive && p.loc) {
       const text = `${p.name} lit the great lamp — the beam swept the bay.`;
       const sockets = this.socketsByPlayer();
@@ -1031,15 +1091,57 @@ export class Room extends DurableObject<Env> {
     return false;
   }
 
-  private finish(r: Omit<GameResult, "shades">) {
-    this.state.phase = "ended";
-    this.state.meeting = null;
-    this.state.result = { ...r, shades: this.state.players.filter((p) => p.role === "shade").map((p) => p.id) };
-    for (const p of this.state.players) {
+  private finish(r: { winner: GameResult["winner"]; reason: string }) {
+    const s = this.state;
+    s.phase = "ended";
+    s.meeting = null;
+    for (const p of s.players) {
       delete p.attempt;
       delete p.working;
     }
+    const players: PlayerSummary[] = s.players.filter((p) => p.role).map((p) => ({
+      id: p.id,
+      role: p.role!,
+      fate: p.adrift ? "adrift" : p.alive ? "survived" : "snuffed",
+      where: p.snuffedAt ?? null,
+      tasksDone: p.stats?.tasks ?? 0,
+      tasksTotal: p.role === "keeper" ? p.tasks.length : 0,
+      snuffs: p.stats?.snuffs ?? 0,
+      sharpVotes: p.stats?.sharp ?? 0,
+    }));
+    const names = Object.fromEntries(s.players.map((p) => [p.id, p.name]));
+    const lamps = s.players.filter((p) => p.stats?.lamp).map((p) => p.id);
+    s.result = {
+      ...r,
+      shades: players.filter((p) => p.role === "shade").map((p) => p.id),
+      gameId: `${s.code}-${s.gameNo}-${s.startedAt}`,
+      durationMs: Math.max(0, Date.now() - s.startedAt),
+      players,
+      honors: computeHonors({ players, names, log: s.log, lamps, winner: r.winner }),
+      log: [...s.log],
+      tale: null,
+      taleBy: null,
+    };
     this.dirty = true;
+    this.tellTale(s.result, names);
+  }
+
+  /** The storyteller writes up the night (AI, with a written fallback), then everyone gets it. */
+  private tellTale(result: GameResult, names: Record<string, string>) {
+    const input = { players: result.players, names, log: result.log, reason: result.reason, winner: result.winner };
+    const { system, user } = talePrompt(taleFacts(input));
+    write(this.env.AI, this.env.AI_MODEL || DEFAULT_MODEL, system, user, cleanTale).then(async (text) => {
+      if (this.state.result !== result) return; // a new game has begun
+      result.tale = text ?? fallbackTale(input);
+      result.taleBy = text ? "ai" : "fallback";
+      this.dirty = true;
+      await this.save();
+      this.broadcastLobby();
+    }).catch(() => {});
+  }
+
+  private logEvent(e: Omit<MatchEvent, "at">) {
+    this.state.log.push({ ...e, at: Math.max(0, Date.now() - this.state.startedAt) });
   }
 
   private sendTasks(ws: WebSocket, p: Player) {

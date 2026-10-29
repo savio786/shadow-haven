@@ -1,5 +1,5 @@
 // Shadow Haven — browser client.
-import { keeperSVG, shadeSVG, coldLanternSVG, wispSVG, bellSVG, boatSVG, LANTERNS } from "./lanterns.js";
+import { keeperSVG, shadeSVG, coldLanternSVG, wispSVG, bellSVG, boatSVG, endSceneSVG, honorIcon, LANTERNS } from "./lanterns.js";
 import { sfx, buzz, isMuted, setMuted } from "./sound.js";
 import { harborSVG, PLACES } from "./harbor.js";
 import { runTask } from "./tasks.js";
@@ -160,6 +160,7 @@ function readName() {
 function enterRoom(code) {
   roomCode = code;
   leaving = false;
+  store.set("sh.lastRoom", code);
   if (location.pathname !== `/r/${code}`) history.pushState({}, "", `/r/${code}`);
   $("room-code").textContent = code;
   $("players").innerHTML = "";
@@ -314,8 +315,48 @@ function backHome(error) {
   roomCode = null;
   banner("");
   if (location.pathname !== "/") history.pushState({}, "", "/");
+  document.body.classList.remove("is-shade", "is-wisp");
+  if (error) store.set("sh.lastRoom", null); // removed, full or closed: don't offer it again
   show("home");
   homeError(error || "");
+  renderWelcome();
+}
+
+/** A warm hello for returning players, their record, and a way back into their game. */
+async function renderWelcome() {
+  const name = store.get("sh.name");
+  const rec = loadRecord();
+  const box = $("welcome");
+  box.hidden = !name;
+  if (!name) return;
+  const hour = new Date().getHours();
+  const greet = hour < 5 ? "Still up" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  $("welcome-hi").textContent = rec.games
+    ? `${greet}, ${name}. The harbor remembers you.`
+    : `${greet}, ${name}. Ready for your first night?`;
+  const meta = $("welcome-record");
+  meta.innerHTML = "";
+  if (rec.games) {
+    for (const [label, value] of [["games", rec.games], ["wins", rec.wins], ["best streak", rec.best]]) {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="meta-value"></span><span class="meta-label"></span>`;
+      li.firstChild.textContent = value;
+      li.lastChild.textContent = label;
+      meta.append(li);
+    }
+  }
+  meta.hidden = !rec.games;
+
+  // Is your last room still open? Offer the way back in.
+  const btn = $("welcome-return");
+  btn.hidden = true;
+  const code = store.get("sh.lastRoom");
+  if (!code) return;
+  const info = await fetch(`/api/room/${code}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!info || roomCode) return;
+  btn.textContent = info.phase === "lobby" ? `Return to room ${code}` : `Rejoin your game in room ${code}`;
+  btn.hidden = false;
+  btn.onclick = () => enterRoom(code);
 }
 
 // ---------- Phase switching ----------
@@ -860,29 +901,252 @@ function onTaskResult(msg) {
 }
 
 // ---------- Game over ----------
+let overTab = "who";
+let taleShown = null;   // the tale text we've already typed out
+
 function renderOver(firstTime = false) {
   const r = lobby.result;
-  if (firstTime) sfx.chime(r.winner === "keepers");
   const keepersWon = r.winner === "keepers";
-  const iWon = (myRole === "shade") !== keepersWon;
+  const mine = r.players.find((p) => p.id === me);
+  const myRoleEnd = mine?.role ?? myRole;
+  const iWon = myRoleEnd ? (myRoleEnd === "shade") !== keepersWon : null;
+
+  if (firstTime) {
+    sfx.chime(keepersWon);
+    overTab = "who";
+    taleShown = null;
+    if (iWon !== null) recordGame(r.gameId, iWon, myRoleEnd);
+  }
+
   document.body.classList.toggle("is-shade", !keepersWon);
   $("over").classList.toggle("shade", !keepersWon);
-  $("over-title").textContent = keepersWon ? "The Keepers win" : "The Shades win";
-  $("over-reason").textContent = r.reason + (myRole ? (iWon ? " You won." : " You lost.") : "");
-  $("over-shades").innerHTML = "";
-  for (const id of r.shades) {
-    const p = lobby.players.find((x) => x.id === id);
-    if (!p) continue;
-    const li = document.createElement("li");
-    li.innerHTML = shadeSVG({ shape: p.shape, size: 44 });
-    const n = document.createElement("span");
-    n.textContent = p.name + (p.id === me ? " (you)" : "");
-    li.append(n);
-    $("over-shades").append(li);
+  if (firstTime || !$("over-art").innerHTML) {
+    $("over-art").innerHTML = endSceneSVG({ keepersWon, lanterns: lobby.players.map((p) => p.lantern) });
   }
+  $("over-title").textContent = keepersWon ? "The Keepers win" : "The Shades win";
+  $("over-reason").textContent = r.reason;
+
+  const you = $("over-you");
+  if (iWon === null) {
+    you.hidden = true;
+  } else {
+    you.hidden = false;
+    you.className = "over-you " + (iWon ? "won" : "lost");
+    const as = myRoleEnd === "shade" ? "a Shade" : "a Lantern Keeper";
+    you.textContent = iWon ? `You won as ${as}` : `You played as ${as} — so close`;
+  }
+
+  // This game, and your record on this device.
+  const rec = loadRecord();
+  const meta = $("over-meta");
+  meta.innerHTML = "";
+  const chip = (label, value) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="meta-value"></span><span class="meta-label"></span>`;
+    li.firstChild.textContent = value;
+    li.lastChild.textContent = label;
+    meta.append(li);
+  };
+  chip("game length", minutes(r.durationMs));
+  if (rec.games) {
+    chip(rec.games === 1 ? "game played" : "games played", rec.games);
+    chip(rec.wins === 1 ? "win" : "wins", rec.wins);
+    if (rec.streak > 1) chip("win streak", rec.streak);
+  }
+
+  renderFates(r);
+  renderHonors(r);
+  renderTale(r);
+  selectTab(overTab, false);
+
+  // What happens next.
   const isHost = lobby.hostId === me;
   $("over-host").hidden = !isHost;
   $("over-wait").hidden = isHost;
+  $("over-wait").textContent = `Waiting for ${nameOf(lobby.hostId)} to start another night…`;
+}
+
+const minutes = (ms) => {
+  const m = Math.max(1, Math.round(ms / 60000));
+  return `${m} min`;
+};
+
+function renderFates(r) {
+  const list = $("over-players");
+  list.innerHTML = "";
+  // Shades first, then the Keepers — survivors before the fallen.
+  const order = { shade: 0, keeper: 1 };
+  const fateOrder = { survived: 0, adrift: 1, snuffed: 2 };
+  const rows = [...r.players].sort((a, b) => order[a.role] - order[b.role] || fateOrder[a.fate] - fateOrder[b.fate]);
+  for (const s of rows) {
+    const p = playerOf(s.id);
+    const li = document.createElement("li");
+    li.className = `fate ${s.role} ${s.fate}` + (s.id === me ? " me" : "");
+    const art = document.createElement("span");
+    art.className = "fate-art";
+    art.innerHTML = s.fate === "snuffed"
+      ? coldLanternSVG({ shape: p?.shape, size: 46 })
+      : s.role === "shade" ? shadeSVG({ shape: p?.shape, size: 30 }) : keeperSVG({ lantern: p?.lantern, shape: p?.shape, size: 30 });
+    const body = document.createElement("div");
+    body.className = "fate-body";
+    const name = document.createElement("strong");
+    name.textContent = (p?.name ?? "Someone") + (s.id === me ? " (you)" : "");
+    const role = document.createElement("span");
+    role.className = "role-pill " + s.role;
+    role.textContent = s.role === "shade" ? "Shade" : "Keeper";
+    const line = document.createElement("span");
+    line.className = "fate-line";
+    const what = s.fate === "survived" ? "Made it through the night"
+      : s.fate === "adrift" ? "Set adrift by the town"
+      : `Snuffed at the ${PLACES[s.where]?.name ?? "harbor"}`;
+    const extra = s.role === "keeper" ? ` · ${s.tasksDone}/${s.tasksTotal} tasks` : s.snuffs ? ` · snuffed ${s.snuffs}` : "";
+    line.textContent = what + extra;
+    if (p?.isBot) name.append(" ", tag("Bot", "bot"));
+    body.append(name, role, line);
+    li.append(art, body);
+    list.append(li);
+  }
+}
+
+function renderHonors(r) {
+  const list = $("over-honors");
+  list.innerHTML = "";
+  if (!r.honors.length) {
+    const li = document.createElement("li");
+    li.className = "honor empty";
+    li.textContent = "A quiet night — no honors this time.";
+    list.append(li);
+    return;
+  }
+  r.honors.forEach((h, i) => {
+    const li = document.createElement("li");
+    li.className = "honor" + (h.who === me ? " me" : "");
+    li.style.animationDelay = `${i * 0.12}s`;
+    const icon = document.createElement("span");
+    icon.className = "honor-icon";
+    icon.innerHTML = honorIcon(h.id);
+    const body = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = h.title;
+    const who = document.createElement("span");
+    who.className = "honor-who";
+    who.textContent = `${nameOf(h.who)}${h.who === me ? " (you)" : ""} — ${h.why}`;
+    body.append(title, who);
+    li.append(icon, body);
+    list.append(li);
+  });
+}
+
+let typeTimer = 0;
+function renderTale(r) {
+  const el = $("tale-text");
+  $("share").disabled = !r.tale;
+  if (!r.tale) {
+    el.className = "tale-text waiting";
+    el.textContent = "The storyteller is gathering the night's events…";
+    $("tale-by").textContent = "";
+  } else if (taleShown !== r.tale) {
+    taleShown = r.tale;
+    el.className = "tale-text";
+    $("tale-by").textContent = r.taleBy === "ai" ? "Told by the harbor's storyteller · written with Workers AI" : "Told by the harbor's storyteller";
+    typeOut(el, r.tale, overTab === "tale");
+  }
+
+  const tl = $("timeline");
+  tl.innerHTML = "";
+  const n = (id) => nameOf(id);
+  const where = (loc) => PLACES[loc]?.name ?? "harbor";
+  const events = [{ at: 0, kind: "start" }, ...r.log, { at: r.durationMs, kind: "end" }];
+  for (const e of events) {
+    const text = {
+      start: "Night falls. The lanterns are lit.",
+      snuff: `${n(e.who)} snuffed ${n(e.victim)} at the ${where(e.loc)}`,
+      report: `${n(e.who)} found the cold lantern and rang the bell`,
+      bell: `${n(e.who)} rang the emergency bell`,
+      adrift: `${n(e.who)} was set adrift — ${e.wasShade ? "a Shade!" : "a Keeper"}`,
+      spared: "The town couldn't agree. Nobody was set adrift.",
+      end: r.winner === "keepers" ? "Dawn. The Keepers win." : "Darkness. The Shades win.",
+    }[e.kind];
+    if (!text) continue;
+    const li = document.createElement("li");
+    li.className = "tl " + e.kind;
+    const t = document.createElement("time");
+    const sec = Math.round(e.at / 1000);
+    t.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+    const span = document.createElement("span");
+    span.textContent = text;
+    li.append(t, span);
+    tl.append(li);
+  }
+}
+
+/** Type the tale out letter by letter (instantly if motion is reduced). */
+function typeOut(el, text, animate) {
+  clearInterval(typeTimer);
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (!animate || reduce) { el.textContent = text; return; }
+  el.textContent = "";
+  let i = 0;
+  const step = Math.max(1, Math.ceil(text.length / 160)); // about 3 seconds in all
+  typeTimer = setInterval(() => {
+    i += step;
+    el.textContent = text.slice(0, i);
+    if (i >= text.length) clearInterval(typeTimer);
+  }, 18);
+}
+
+function selectTab(tab, userChose = true) {
+  const was = overTab;
+  overTab = tab;
+  for (const t of ["who", "honors", "tale"]) {
+    $("tab-" + t).hidden = t !== tab;
+    $("tabbtn-" + t).setAttribute("aria-selected", String(t === tab));
+    $("tabbtn-" + t).tabIndex = t === tab ? 0 : -1;
+  }
+  // Opening the tale for the first time types it out.
+  if (userChose && tab === "tale" && was !== "tale" && lobby?.result?.tale) typeOut($("tale-text"), lobby.result.tale, true);
+}
+
+async function shareTale() {
+  const r = lobby?.result;
+  if (!r?.tale) return;
+  const link = location.origin;
+  const text = `${r.tale}\n\n— a night in Shadow Haven. Play: ${link}`;
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: "A night in Shadow Haven", text });
+      return;
+    }
+  } catch (e) {
+    if (e?.name === "AbortError") return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("The tale is copied — paste it anywhere.");
+  } catch {
+    prompt("Copy the tale:", text);
+  }
+}
+
+// ---------- Your record on this device ----------
+function loadRecord() {
+  return { games: 0, wins: 0, streak: 0, best: 0, keeper: 0, shade: 0, last: null, ...(store.get("sh.record") || {}) };
+}
+
+function recordGame(gameId, won, role) {
+  const rec = loadRecord();
+  if (rec.last === gameId) return; // already counted (e.g. after a refresh)
+  rec.last = gameId;
+  rec.games += 1;
+  rec[role === "shade" ? "shade" : "keeper"] += 1;
+  if (won) {
+    rec.wins += 1;
+    rec.streak += 1;
+    rec.best = Math.max(rec.best, rec.streak);
+  } else {
+    rec.streak = 0;
+  }
+  store.set("sh.record", rec);
 }
 
 // ---------- In game ----------
@@ -1008,6 +1272,7 @@ function initLobby() {
   $("start").addEventListener("click", () => send({ t: "start" }));
   const leave = () => {
     leaving = true;
+    store.set("sh.lastRoom", null);
     send({ t: "leave" });
     const sock = ws;
     setTimeout(() => { try { sock?.close(); } catch {} }, 200);
@@ -1027,6 +1292,17 @@ function initLobby() {
   $("task-close").addEventListener("click", () => closeTask(true));
   $("task-modal").addEventListener("keydown", (e) => { if (e.key === "Escape") closeTask(true); });
   $("over-lobby").addEventListener("click", () => send({ t: "endGame" }));
+  $("over-again").addEventListener("click", () => { $("over-again").disabled = true; send({ t: "playAgain" }); setTimeout(() => ($("over-again").disabled = false), 3000); });
+  $("over-leave").addEventListener("click", leave);
+  $("share").addEventListener("click", shareTale);
+  const tabs = ["who", "honors", "tale"];
+  for (const t of tabs) $("tabbtn-" + t).addEventListener("click", () => selectTab(t));
+  document.querySelector(".tabs").addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    const i = (tabs.indexOf(overTab) + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+    selectTab(tabs[i]);
+    $("tabbtn-" + tabs[i]).focus();
+  });
   $("snuffed-ok").addEventListener("click", () => ($("snuffed-overlay").hidden = true));
   $("chat-form").addEventListener("submit", (e) => {
     e.preventDefault();

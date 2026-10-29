@@ -30,6 +30,23 @@ export class AiGate {
   fail(now: number) { this.pausedUntil = now + 60_000; }
 }
 
+/** Ask the model for free text (the end-of-game tale). Null if it can't. */
+export async function write(ai: AiBinding | undefined, model: string, system: string, user: string, clean: (raw: unknown) => string | null, timeoutMs = 12_000): Promise<string | null> {
+  if (!ai) return null;
+  try {
+    const run = ai.run(model, {
+      messages: [{ role: "system", content: system }, { role: "user", content: user }],
+      max_tokens: 260,
+      temperature: 0.8,
+    });
+    const out = await Promise.race([run, new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), timeoutMs))]);
+    return clean(out);
+  } catch (err) {
+    console.log("ai tale failed; using fallback:", String(err).slice(0, 200));
+    return null;
+  }
+}
+
 export async function speak(ai: AiBinding | undefined, model: string, ctx: MindContext, gate: AiGate): Promise<Voice> {
   const now = Date.now();
   if (ai && gate.ok(now)) {

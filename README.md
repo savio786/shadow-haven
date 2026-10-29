@@ -21,14 +21,15 @@ src/harbor.ts    the harbor's locations and paths, route finding
 src/bots.ts      bot brains: personalities, memory, decisions
 src/tasks.ts     task definitions, challenges and answer checking
 src/minds.ts     how bots think in meetings: knowledge, prompts, fallback lines, votes
-src/ai.ts        Workers AI voices with timeouts and fallback
+src/ai.ts        Workers AI voices and the tale, with timeouts and fallback
+src/chronicle.ts end of the night: honors, the facts of the match, the tale
 public/app.js    browser client (home + lobby)
 public/lanterns.js  original Lantern Keeper SVG art
 public/harbor.js original harbor map art
 public/tasks.js  the six task mini-games
 public/lanterns.js  also: cold lanterns, wisps, the Harbor Bell, the drifting boat
 public/sound.js  synthesized sounds (Web Audio) and phone haptics, with mute
-test/            unit tests (bot brains, bot minds) + end-to-end tests (lobby, roles, harbor, tasks, snuff, meetings)
+test/            unit tests (bot brains, bot minds, chronicle) + end-to-end tests (lobby, roles, harbor, tasks, snuff, meetings, end)
 wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 ```
 
@@ -123,6 +124,26 @@ always votes for the culprit, and never votes out someone it saw light the lamp.
 If the model is slow (over 7s), errors, or the daily free allowance is used
 up, bots switch to evidence-based lines for a minute and the game carries on.
 
+## The end of the night
+
+When a side wins, everyone gets an end screen with:
+
+- **The result**, with original art (the harbor at dawn, or gone dark) and a
+  personal line: whether *you* won, and as what.
+- **Who was who**: every player's role and fate (survived, snuffed and where,
+  set adrift), with tasks done.
+- **Honors** worked out from what actually happened: Brightest lantern, Sharp
+  eye, Silent shadow, Bell ringer, Lamplighter, Last light.
+- **The tale**: a short story of the match written by Workers AI from the real
+  events (with a written fallback), typed out like a storybook, a timeline,
+  and a **Share** button (the phone's share sheet, or copy to clipboard).
+- **Your record** on this device: games, wins and win streak.
+- **Play again** (host): same players, fresh roles, straight back in — anyone
+  who left is let go. **Lobby** to change seats or bots.
+
+The home screen welcomes returning players by name, shows their record, and
+offers a way back into a game in progress.
+
 ## Deploying
 
 Pushing to `main` deploys automatically. The workflow needs two repository secrets
@@ -148,6 +169,6 @@ record pointing somewhere else.
 4. ~~Tasks: six mini-games, server-checked, witnessed lamp, fake tasks for Shades, bots that work, Keepers' task win~~
 5. ~~Snuffing, wisps, cold lanterns, the Harbor Bell, Shades' win, bot evidence, How to play~~
 6. ~~Meetings: emergency bell, chat with smart quick lines, voting, verdict, AI-voiced bots that answer and vote on evidence, sound~~
-7. Win conditions and play again
+7. ~~End of the night: who was who, honors, AI-written tale and timeline, share, personal record, play again, welcome back~~
 8. Art pass
 9. Reconnects, host handover, rate limits, tests

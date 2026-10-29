@@ -345,11 +345,7 @@ button.big { font-size: 1.3rem; padding: 16px; }
 .crank .crank-arm { fill: #8a93a6; transform-origin: 50px 50px; }
 .crank .crank-hub { fill: #e7e2d6; }
 
-/* ---------- Game over ---------- */
-.over { text-align: center; padding-top: 56px; }
-.over h1 { color: #ffd59a; }
-.over.shade h1 { color: #c9b6ff; }
-.over .allies-list { margin: 10px 0 28px; }
+
 
 .toast.witness { border-color: #ffd84d; background: #2e2716; }
 .toast.danger { border-color: #ff6b5b; background: #3a1616; color: #ffd9d4; }
@@ -507,6 +503,91 @@ button.bell-btn .bell-waves { display: none; }
   border-radius: 50%; background: #151b2ccc; font-size: 1rem; line-height: 1; backdrop-filter: blur(4px);
 }
 
+/* ---------- The end of the night ---------- */
+.screen.over { text-align: left; padding-top: 16px; padding-bottom: 120px; }
+.over-hero { text-align: center; }
+.over-art { border-radius: 18px; overflow: hidden; border: 1px solid var(--line); line-height: 0; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
+.end-scene { width: 100%; height: auto; display: block; }
+.end-scene .beam-sweep { transform-origin: 8px 58px; animation: sweep 6s ease-in-out infinite; }
+.end-scene .shore-flame { animation: flicker 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.end-scene .eyes { animation: blink 5s infinite; }
+@keyframes sweep { 0%, 100% { transform: rotate(-6deg); opacity: .9; } 50% { transform: rotate(5deg); opacity: .6; } }
+@keyframes blink { 0%, 44%, 50%, 100% { opacity: 1; } 47% { opacity: 0; } }
+.over-hero .eyebrow { margin-top: 18px; }
+.over h1 { font-size: 2.2rem; margin: 4px 0 6px; color: #ffd59a; }
+.over.shade h1 { color: #c9b6ff; }
+.over-reason { color: var(--muted); max-width: 30em; margin: 0 auto 12px; }
+.over-you {
+  display: inline-block; margin: 0 0 14px; padding: 7px 16px; border-radius: 999px;
+  font-weight: 600; border: 1px solid var(--line); background: var(--panel);
+}
+.over-you.won { border-color: #ffb347; color: #ffd59a; box-shadow: 0 0 24px #ffb34733; }
+.over.shade .over-you.won { border-color: #9b7bff; color: #d9ccff; box-shadow: 0 0 24px #9b7bff33; }
+.over-meta { list-style: none; padding: 0; margin: 0 0 18px; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+.over-meta li { display: grid; justify-items: center; min-width: 76px; padding: 8px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+.meta-value { font-size: 1.25rem; font-weight: 700; color: var(--ink); }
+.meta-label { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+.tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); position: sticky; top: 8px; z-index: 3; backdrop-filter: blur(6px); }
+.tabs button { border: 0; border-radius: 10px; padding: 9px 6px; background: transparent; color: var(--muted); font-size: .92rem; }
+.tabs button[aria-selected="true"] { background: var(--panel-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+.tabs button:focus-visible { outline: 2px solid var(--flame); }
+.tab-panel { margin-top: 14px; animation: rise .35s ease-out both; }
+
+.fates { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.fate { display: grid; grid-template-columns: 52px 1fr; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); }
+.fate.me { border-color: var(--flame); }
+.fate.shade { background: linear-gradient(90deg, #1f1830, var(--panel) 70%); }
+.fate.snuffed, .fate.adrift { opacity: .78; }
+.fate-art { display: grid; place-items: center; }
+.fate-body { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; }
+.fate-body strong { font-size: 1rem; }
+.fate-line { grid-column: 1 / -1; color: var(--muted); font-size: .88rem; }
+.role-pill { font: 600 .68rem ui-sans-serif, system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; }
+.role-pill.keeper { background: #ffb34722; color: #ffd59a; }
+.role-pill.shade { background: #9b7bff26; color: #d9ccff; }
+
+.honors { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.honor { display: grid; grid-template-columns: 44px 1fr; gap: 12px; align-items: center; padding: 12px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); animation: rise .45s ease-out both; }
+.honor.me { border-color: var(--flame); box-shadow: 0 0 22px #ffb34722; }
+.honor.empty { display: block; text-align: center; color: var(--muted); font-style: italic; }
+.honor-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; background: var(--fog); }
+.honor strong { display: block; color: #ffd59a; }
+.honor-who { color: var(--ink); font-size: .92rem; }
+
+.tale { padding: 18px 18px 12px; border-radius: 16px; background: linear-gradient(180deg, #1e1a14, #15131a); border: 1px solid #3a3020; box-shadow: inset 0 0 40px #00000055; }
+.tale-text { margin: 0; font-size: 1.06rem; line-height: 1.7; color: #f1e6cf; min-height: 6em; }
+.tale-text::first-letter { font-size: 2.4em; float: left; line-height: .9; margin: 4px 6px 0 0; color: #ffb347; }
+.tale-text.waiting { color: var(--muted); font-style: italic; animation: breatheText 1.8s ease-in-out infinite; }
+.tale-text.waiting::first-letter { font-size: inherit; float: none; margin: 0; color: inherit; }
+@keyframes breatheText { 50% { opacity: .5; } }
+.tale-by { margin: 10px 0 0; text-align: right; font-size: .8rem; color: #a8987a; font-style: italic; }
+.share-btn { margin: 12px 0 18px; }
+.timeline { list-style: none; margin: 8px 0 0; padding: 0 0 0 14px; border-left: 2px solid var(--line); display: grid; gap: 10px; }
+.tl { display: grid; grid-template-columns: 44px 1fr; gap: 8px; position: relative; font-size: .92rem; }
+.tl::before { content: ""; position: absolute; left: -20px; top: .45em; width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.tl.snuff::before { background: #9b7bff; }
+.tl.report::before, .tl.bell::before { background: #c9923e; }
+.tl.adrift::before { background: #4fc3d9; }
+.tl.end::before { background: var(--flame); }
+.tl time { font: .8rem ui-monospace, Menlo, Consolas, monospace; color: var(--muted); padding-top: 2px; }
+
+.over-bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, transparent, #0b0f1aee 30%);
+  display: grid; justify-items: center; gap: 4px;
+}
+.over-actions { width: min(528px, 100%); display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+.over-actions .primary { font-size: 1.05rem; }
+.over-wait { margin: 0; color: var(--ink); text-align: center; background: var(--panel); border: 1px solid var(--line); padding: 10px 16px; border-radius: 999px; width: min(528px, 100%); }
+.over-bar .link { margin: 4px auto 0; }
+
+/* ---------- Welcome back ---------- */
+.welcome { text-align: center; margin: -8px 0 18px; animation: rise .5s ease-out both; }
+.welcome-hi { margin: 0 0 10px; font-size: 1.05rem; color: #ffd59a; }
+.welcome .over-meta { margin-bottom: 12px; }
+
 /* ---------- How to play ---------- */
 .howto-card { max-height: calc(100vh - 32px); overflow-y: auto; }
 .howto-steps { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 14px; counter-reset: step; }
@@ -558,7 +639,12 @@ button.bell-btn .bell-waves { display: none; }
   .harbor-map .place .ring, .harbor-map .place .halo, .here h3.arrive, .shake, .tug,
   button.report, .cold-svg .frost, .cold-svg .breath, .wisp-svg, body.flash::after,
   .snuffed-overlay, .snuffed-card .cold-svg, .bell-svg .bell-swing, .bell-svg .bell-waves,
-  .chat .line, .typing::after, .boat-svg .water path, .fog-art, .tally li { animation: none; }
+  .chat .line, .typing::after, .boat-svg .water path, .fog-art, .tally li,
+  .end-scene .beam-sweep, .end-scene .shore-flame, .end-scene .eyes, .tab-panel, .honor, .welcome,
+  .tale-text.waiting { animation: none; }
   .boat-svg .boat { animation-duration: .01s; }
   .chat { scroll-behavior: auto; }
 }
+
+/* On the end screen the action bar owns the bottom edge. */
+body[data-screen="over"] .mute { bottom: auto; top: 12px; left: auto; right: 12px; }

@@ -35,7 +35,42 @@ export type Phase = "lobby" | "reveal" | "playing" | "meeting" | "ended";
 export interface GameResult {
   winner: "keepers" | "shades";
   reason: string;
-  shades: string[]; // revealed at the end
+  shades: string[];          // revealed at the end
+  gameId: string;            // unique per game, so a device counts it once
+  durationMs: number;
+  players: PlayerSummary[];  // who was who, and how it went for them
+  honors: Honor[];
+  log: MatchEvent[];         // what happened, in order
+  tale: string | null;       // the story of the night (arrives a moment after the end)
+  taleBy: "ai" | "fallback" | null;
+}
+
+export interface PlayerSummary {
+  id: string;
+  role: Role;
+  fate: "survived" | "snuffed" | "adrift";
+  where: string | null;      // where they were snuffed
+  tasksDone: number;         // real tasks (Shades' fakes don't count)
+  tasksTotal: number;
+  snuffs: number;
+  sharpVotes: number;        // votes cast for a Shade
+}
+
+export interface Honor {
+  id: string;                // stable key for the icon
+  title: string;
+  who: string;
+  why: string;
+}
+
+export interface MatchEvent {
+  at: number;                // ms since play began
+  kind: "snuff" | "report" | "bell" | "adrift" | "spared";
+  who?: string;              // snuffer / reporter / ringer / the one set adrift
+  victim?: string;
+  loc?: string;
+  found?: string[];
+  wasShade?: boolean;
 }
 
 export interface PublicTask {
@@ -122,6 +157,7 @@ export type ClientMsg =
   | { t: "removePlayer"; id: string }
   | { t: "start" }
   | { t: "endGame" }
+  | { t: "playAgain" }
   | { t: "move"; to: string }
   | { t: "taskStart"; id: string }
   | { t: "taskDone"; id: string; nonce: string; answer?: unknown }

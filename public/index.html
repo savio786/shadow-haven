@@ -22,6 +22,12 @@
       <p class="tag">Keep the harbor lights burning. One of you is a Shade.</p>
     </div>
 
+    <section id="welcome" class="welcome" hidden>
+      <p id="welcome-hi" class="welcome-hi"></p>
+      <ul id="welcome-record" class="over-meta"></ul>
+      <button id="welcome-return" class="primary wide" hidden></button>
+    </section>
+
     <form id="home-form" class="card" autocomplete="off">
       <label for="name">Your name</label>
       <input id="name" name="name" maxlength="16" placeholder="e.g. Wren" required />
@@ -182,17 +188,47 @@
     <button id="ready-btn" class="ghost wide ready-btn" hidden>I'm ready to vote</button>
   </main>
 
-  <!-- Game over -->
+  <!-- The end of the night -->
   <main id="over" class="screen over" hidden>
-    <p class="eyebrow center">The night is over</p>
-    <h1 id="over-title"></h1>
-    <p id="over-reason" class="reveal-text"></p>
-    <p class="eyebrow center">The Shades were</p>
-    <ul id="over-shades" class="allies-list"></ul>
-    <div id="over-host" hidden>
-      <button id="over-lobby" class="primary wide">Back to the lobby</button>
+    <section class="over-hero">
+      <div id="over-art" class="over-art" aria-hidden="true"></div>
+      <p id="over-eyebrow" class="eyebrow center">The night is over</p>
+      <h1 id="over-title"></h1>
+      <p id="over-reason" class="over-reason"></p>
+      <p id="over-you" class="over-you"></p>
+      <ul id="over-meta" class="over-meta" aria-label="This game and your record"></ul>
+    </section>
+
+    <nav class="tabs" role="tablist" aria-label="About this game">
+      <button role="tab" id="tabbtn-who" data-tab="who" aria-controls="tab-who" aria-selected="true">Who was who</button>
+      <button role="tab" id="tabbtn-honors" data-tab="honors" aria-controls="tab-honors" aria-selected="false">Honors</button>
+      <button role="tab" id="tabbtn-tale" data-tab="tale" aria-controls="tab-tale" aria-selected="false">The tale</button>
+    </nav>
+
+    <section id="tab-who" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-who">
+      <ul id="over-players" class="fates"></ul>
+    </section>
+    <section id="tab-honors" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-honors" hidden>
+      <ul id="over-honors" class="honors"></ul>
+    </section>
+    <section id="tab-tale" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-tale" hidden>
+      <article class="tale">
+        <p id="tale-text" class="tale-text"></p>
+        <p id="tale-by" class="tale-by"></p>
+      </article>
+      <button id="share" class="ghost wide share-btn">Share this tale</button>
+      <p class="eyebrow">How the night went</p>
+      <ol id="timeline" class="timeline"></ol>
+    </section>
+
+    <div class="over-bar">
+      <div id="over-host" class="over-actions" hidden>
+        <button id="over-again" class="primary">Play again</button>
+        <button id="over-lobby" class="ghost">Lobby</button>
+      </div>
+      <p id="over-wait" class="over-wait" hidden></p>
+      <button id="over-leave" class="link">Leave the harbor</button>
     </div>
-    <p id="over-wait" class="muted center" hidden>Waiting for the host…</p>
   </main>
 
   <!-- Task mini-game -->

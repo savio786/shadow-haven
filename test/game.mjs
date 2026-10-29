@@ -75,11 +75,11 @@ export async function dealUntil(humans, bots, want = () => true, tries = 25) {
   for (let i = 0; i < tries; i++) {
     for (const c of clients) c.msgs.length = 0;
     host.send({ t: "start" });
-    await Promise.all(clients.map((c) => c.waitFor((m) => m.t === "tasks")));
-    await Promise.all(clients.map((c) => c.waitFor((m) => m.t === "role")));
+    await Promise.all(clients.map((c) => c.waitFor((m) => m.t === "tasks", 8000)));
+    await Promise.all(clients.map((c) => c.waitFor((m) => m.t === "role", 8000)));
     if (want(clients)) {
       await Promise.all(clients.map((c) => c.lobbyWhere((m) => m.phase === "playing", 12_000)));
-      await Promise.all(clients.map((c) => c.waitFor((m) => m.t === "view")));
+      await Promise.all(clients.map((c) => c.waitFor((m) => m.t === "view", 8000)));
       return { code, clients, host };
     }
     host.send({ t: "endGame" });

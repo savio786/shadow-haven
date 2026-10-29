@@ -80,6 +80,54 @@ export function boatSVG({ lantern = "amber", shade = false, size = 160 } = {}) {
   </svg>`;
 }
 
+/** The harbor at the end of the night: lit and safe, or dark and watched. */
+export function endSceneSVG({ keepersWon = true, lanterns = [] } = {}) {
+  const lit = keepersWon;
+  const sky = lit ? ["#2b2f52", "#c97b4a"] : ["#06070d", "#151027"];
+  const shore = lanterns.slice(0, 10).map((l, i) => {
+    const x = 40 + i * 32;
+    const flame = lit ? (LANTERNS[l] ?? LANTERNS.amber) : "#3a3550";
+    return `<g transform="translate(${x} 142)"><rect x="-1" y="0" width="2" height="16" fill="#2a2a38"/>
+      <rect x="-5" y="-11" width="10" height="11" rx="2" fill="#1d2230" stroke="#6b7388" stroke-width="1"/>
+      <circle cx="0" cy="-5.5" r="${lit ? 2.6 : 1.5}" fill="${flame}" class="${lit ? "shore-flame" : ""}" style="animation-delay:${i * 0.2}s"/>
+      ${lit ? `<circle cx="0" cy="-5.5" r="10" fill="${flame}" opacity=".18"/>` : ""}</g>`;
+  }).join("");
+  return `<svg class="end-scene ${lit ? "lit" : "dark"}" viewBox="0 0 400 190" role="img" aria-label="${lit ? "The harbor, every lantern burning" : "The harbor, gone dark"}">
+    <defs>
+      <linearGradient id="endsky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${sky[0]}"/><stop offset="1" stop-color="${sky[1]}"/></linearGradient>
+      <linearGradient id="beam" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffe2a8" stop-opacity=".75"/><stop offset="1" stop-color="#ffe2a8" stop-opacity="0"/></linearGradient>
+    </defs>
+    <rect width="400" height="190" fill="url(#endsky)"/>
+    ${lit ? `<circle cx="300" cy="120" r="34" fill="#ffcf8a" opacity=".55"/><circle cx="300" cy="120" r="22" fill="#ffd9a0"/>` :
+      `<g class="eyes"><ellipse cx="96" cy="70" rx="3.5" ry="2" fill="#9b7bff"/><ellipse cx="108" cy="70" rx="3.5" ry="2" fill="#9b7bff"/>
+       <ellipse cx="292" cy="56" rx="3" ry="1.8" fill="#9b7bff" opacity=".8"/><ellipse cx="303" cy="56" rx="3" ry="1.8" fill="#9b7bff" opacity=".8"/></g>`}
+    <path d="M0 128 C60 120 120 132 200 126 C280 120 340 130 400 124 V190 H0Z" fill="${lit ? "#1d2a44" : "#0b1020"}"/>
+    <g transform="translate(70 0)">
+      <path d="M-9 128 L-6 62 H6 L9 128Z" fill="${lit ? "#e7e2d6" : "#3a3f4b"}"/>
+      <path d="M-7 104 H7 M-8 84 H8" stroke="${lit ? "#c94f4f" : "#2a2f3a"}" stroke-width="5"/>
+      <rect x="-9" y="52" width="18" height="12" rx="2" fill="${lit ? "#ffd59a" : "#1d2230"}" stroke="#4a5163" stroke-width="2"/>
+      <path d="M-10 52 L0 42 L10 52Z" fill="#4a5163"/>
+      ${lit ? `<path class="beam-sweep" d="M8 58 L190 30 L190 86 Z" fill="url(#beam)"/>` : ""}
+    </g>
+    <path d="M0 158 C80 150 160 162 240 156 C320 150 360 160 400 154 V190 H0Z" fill="${lit ? "#16213a" : "#070a14"}"/>
+    ${shore}
+    <rect width="400" height="190" fill="${lit ? "#ffffff" : "#9fb4d6"}" opacity="${lit ? ".02" : ".05"}"/>
+  </svg>`;
+}
+
+/** Small emblems for the honors. */
+export function honorIcon(id) {
+  const icons = {
+    bright: `<circle cx="16" cy="16" r="12" fill="#ffb34733"/><path d="M16 6c5 6 5 12 0 15-5-3-5-9 0-15z" fill="#ffb347"/><path d="M16 12c2 3 2 6 0 7-2-1-2-4 0-7z" fill="#fff3d0"/>`,
+    sharp: `<path d="M4 16c4-7 20-7 24 0-4 7-20 7-24 0z" fill="none" stroke="#cfe2f5" stroke-width="2"/><circle cx="16" cy="16" r="4.5" fill="#4fc3d9"/><circle cx="16" cy="16" r="1.8" fill="#0e1220"/>`,
+    shadow: `<circle cx="16" cy="16" r="12" fill="#7b4dff33"/><path d="M16 6c5 6 5 12 0 15-5-3-5-9 0-15z" fill="#0b0912" stroke="#9b7bff" stroke-width="1.4"/><circle cx="14" cy="15" r="1" fill="#c9b6ff"/><circle cx="18" cy="15" r="1" fill="#c9b6ff"/>`,
+    bell: `<path d="M16 7c-5 0-7 4-7 9 0 4-2 6-4 7h22c-2-1-4-3-4-7 0-5-2-9-7-9z" fill="#c9923e"/><circle cx="16" cy="25" r="2.2" fill="#8a5f24"/>`,
+    lamp: `<path d="M13 28h6l-1.5-14h-3z" fill="#e7e2d6"/><rect x="12" y="9" width="8" height="6" rx="1" fill="#ffd59a"/><path d="M20 12l9-4M20 12l9 4" stroke="#ffd59a" stroke-width="1.6" stroke-linecap="round"/>`,
+    survivor: `<circle cx="16" cy="16" r="12" fill="#9bd36a22"/><path d="M16 5c6 7 6 14 0 18-6-4-6-11 0-18z" fill="#9bd36a"/><path d="M16 12c2.5 3.5 2 7 0 8.5-2-1.5-2.5-5 0-8.5z" fill="#f2ffe0"/>`,
+  };
+  return `<svg viewBox="0 0 32 32" width="34" height="34" aria-hidden="true">${icons[id] ?? icons.bright}</svg>`;
+}
+
 /** The Harbor Bell. */
 export function bellSVG({ size = 120 } = {}) {
   return `<svg class="bell-svg" viewBox="0 0 120 120" width="${size}" height="${size}" aria-hidden="true">
