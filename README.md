@@ -14,8 +14,12 @@ Live at **https://game2.sedigitaltransformation.com**
 
 ```
 public/          static frontend (HTML, CSS, SVG art)
-src/worker.ts    entry point: /api/health, routes /api/room/:code to its Room
-src/room.ts      the Room Durable Object (one per game)
+src/worker.ts    entry point: /api/health, POST /api/rooms, /api/room/:code[/ws]
+src/room.ts      the Room Durable Object (one per game): lobby, players, bots
+src/shared.ts    constants and message types shared by server and client
+public/app.js    browser client (home + lobby)
+public/lanterns.js  original Lantern Keeper SVG art
+test/            end-to-end lobby tests
 wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 ```
 
@@ -25,7 +29,15 @@ wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 npm install
 npm run dev        # http://localhost:8787
 npm run check      # typecheck + dry-run build
+npm test           # lobby tests (needs `npm run dev` running in another terminal)
 ```
+
+## Bots
+
+The host can add bot Keepers to fill seats, so a full game can be tested with
+one person. Bots run on the server inside the room's Durable Object, so they
+can't be seen through or cheated with from the browser. In later steps they
+move around the harbor, do tasks, play as a Shade, and talk and vote in meetings.
 
 ## Deploying
 
@@ -46,7 +58,7 @@ record pointing somewhere else.
 ## Roadmap
 
 0. ~~Skeleton: hello page live on the custom domain, auto-deployed~~
-1. Rooms and lobby (create/join by code, live player list over WebSockets)
+1. ~~Rooms and lobby: create/join by code, invite links, live player list, bots~~
 2. Secret role assignment and reveal
 3. Harbor map: move between locations
 4. Tasks and the shared progress lantern
