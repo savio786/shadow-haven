@@ -15,6 +15,10 @@ export { Room } from "./room";
 export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
   ASSETS: Fetcher;
+  /** Workers AI, which gives bots their voices in meetings (optional: bots fall back without it). */
+  AI?: { run(model: string, input: unknown): Promise<unknown> };
+  /** Which Workers AI text model to use (defaults to Llama 3.1 8B Instruct). */
+  AI_MODEL?: string;
 }
 
 export default {
@@ -22,7 +26,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/health") {
-      return Response.json({ ok: true, game: "Shadow Haven", step: 5 });
+      return Response.json({ ok: true, game: "Shadow Haven", step: 6 });
     }
 
     if (url.pathname === "/api/rooms" && request.method === "POST") {

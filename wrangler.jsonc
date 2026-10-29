@@ -14,6 +14,10 @@
     "run_worker_first": ["/api/*"]
   },
 
+  // Workers AI gives bots their voices in meetings. Without it (or when the
+  // daily allowance is used up) bots fall back to evidence-based lines.
+  "ai": { "binding": "AI" },
+
   // One Durable Object instance per game room, addressed by room code.
   "durable_objects": {
     "bindings": [{ "name": "ROOMS", "class_name": "Room" }]

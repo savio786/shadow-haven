@@ -12,6 +12,7 @@
 </head>
 <body>
   <div id="banner" class="banner" hidden></div>
+  <button id="mute" class="mute" aria-label="Sound on" title="Sound"></button>
 
   <!-- Home: create or join -->
   <main id="home" class="screen">
@@ -133,15 +134,52 @@
     <button id="game-leave" class="link">Leave room</button>
   </main>
 
-  <!-- Everyone gathers at the bell -->
+  <!-- Everyone gathers at the bell: discuss, vote, verdict -->
   <main id="meeting" class="screen meeting" hidden>
-    <div id="bell-art" class="bell-art"></div>
-    <p class="eyebrow center">The Harbor Bell rings</p>
-    <h1 id="meeting-title"></h1>
-    <p id="meeting-text" class="reveal-text"></p>
+    <header class="meet-head">
+      <div id="bell-art" class="meet-bell" aria-hidden="true"></div>
+      <div class="meet-title">
+        <p id="meet-stage" class="eyebrow">The Harbor Bell rings</p>
+        <h2 id="meeting-title"></h2>
+        <p id="meeting-text" class="muted small"></p>
+      </div>
+      <div class="timer" aria-hidden="true">
+        <svg viewBox="0 0 44 44"><circle class="t-track" cx="22" cy="22" r="19"/><circle id="timer-fill" class="t-fill" cx="22" cy="22" r="19" pathLength="100"/></svg>
+        <span id="timer-secs"></span>
+      </div>
+    </header>
+
     <ul id="meeting-cold" class="cold-list"></ul>
-    <div class="countdown" aria-hidden="true"><span id="meeting-bar"></span></div>
-    <p class="muted center small">Talking it over and voting someone adrift arrive in the next update. Back to the harbor shortly…</p>
+
+    <section id="verdict" class="verdict" hidden>
+      <div id="verdict-art" class="verdict-art"></div>
+      <h2 id="verdict-title"></h2>
+      <p id="verdict-text"></p>
+      <ul id="tally" class="tally"></ul>
+    </section>
+
+    <section id="vote-wrap" class="vote-wrap" hidden>
+      <p id="vote-prompt" class="vote-prompt">Who should be set adrift?</p>
+      <ul id="vote-grid" class="vote-grid"></ul>
+      <div class="vote-actions">
+        <button id="vote-skip" class="ghost">Skip</button>
+        <button id="vote-go" class="primary" disabled>Choose someone</button>
+      </div>
+      <p id="vote-status" class="muted small center"></p>
+    </section>
+
+    <section id="chat-wrap" class="chat-card">
+      <ol id="chat" class="chat" aria-live="polite" aria-label="Meeting chat"></ol>
+      <p id="typing" class="typing" hidden></p>
+      <div id="quick" class="quick" aria-label="Quick lines"></div>
+      <form id="chat-form" class="chat-form" autocomplete="off">
+        <input id="chat-input" maxlength="140" placeholder="Say something… (name someone to ask them)" aria-label="Your message" />
+        <button class="primary" type="submit">Send</button>
+      </form>
+      <p id="wisp-note" class="wisp-note" hidden>You're a wisp: you can listen, but the living can't hear you.</p>
+    </section>
+
+    <button id="ready-btn" class="ghost wide ready-btn" hidden>I'm ready to vote</button>
   </main>
 
   <!-- Game over -->

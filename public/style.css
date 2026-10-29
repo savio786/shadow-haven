@@ -428,6 +428,85 @@ body.flash::after {
 .cold-list li { display: grid; justify-items: center; gap: 2px; color: #cfe2f5; }
 .meeting .countdown span { background: #c9923e; }
 
+/* ---------- The meeting ---------- */
+.meeting { text-align: left; padding-top: 20px; }
+.meet-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
+.meet-bell .bell-svg .bell-swing { animation-iteration-count: 2; }
+.meet-title h2 { font-size: 1.25rem; margin: 2px 0; color: #ffd59a; line-height: 1.2; }
+.meet-title p { margin: 0; }
+.timer { position: relative; width: 50px; height: 50px; }
+.timer svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.timer .t-track { fill: none; stroke: #232c42; stroke-width: 4; }
+.timer .t-fill { fill: none; stroke: #c9923e; stroke-width: 4; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 0; }
+.timer span { position: absolute; inset: 0; display: grid; place-items: center; font: 600 .95rem ui-sans-serif, system-ui, sans-serif; color: var(--ink); }
+.timer.urgent .t-fill { stroke: #ff6b5b; }
+.timer.urgent span { color: #ffb0a6; }
+.meeting .cold-list { justify-content: flex-start; margin: 14px 0 0; }
+
+.chat-card {
+  margin-top: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px; display: grid; gap: 8px;
+}
+.chat { list-style: none; margin: 0; padding: 4px 4px 0; display: grid; gap: 8px; max-height: min(46vh, 380px); overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
+.chat .line { display: grid; grid-template-columns: 24px 1fr; gap: 8px; align-items: start; animation: rise .3s ease-out both; }
+.chat .line .avatar { display: grid; place-items: center; padding-top: 2px; }
+.chat .line .who { font: 600 .82rem ui-sans-serif, system-ui, sans-serif; letter-spacing: .02em; margin-right: 6px; }
+.chat .line p { margin: 2px 0 0; padding: 7px 11px; border-radius: 4px 14px 14px 14px; background: #1f2840; display: block; width: fit-content; max-width: 100%; overflow-wrap: anywhere; }
+.chat .line.mine p { background: #2c2a22; border: 1px solid #5a4a2a; }
+body.is-shade .chat .line.mine p { background: #261e3a; border-color: #4b3a78; }
+.chat .line.system { display: block; text-align: center; font-style: italic; color: var(--muted); font-size: .88rem; padding: 2px 0; }
+.chat .line .tag { font-size: .62rem; padding: 1px 6px; vertical-align: 1px; }
+.typing { margin: 0 4px; font-style: italic; color: var(--muted); font-size: .85rem; }
+.typing::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.2s steps(4) infinite; }
+@keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+.quick { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.chip { flex: none; padding: 6px 12px; font-size: .82rem; border-radius: 999px; background: #1a2135; border-color: #2f3a5a; white-space: nowrap; }
+.chip:hover { border-color: var(--flame); }
+.chat-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.chat-form input { padding: 10px 12px; }
+.wisp-note { margin: 0; text-align: center; color: #bcd6f2; font-style: italic; font-size: .88rem; }
+.ready-btn { margin-top: 10px; }
+
+.vote-wrap { margin-top: 14px; }
+.vote-prompt { text-align: center; font-size: 1.1rem; margin: 0 0 10px; }
+.vote-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.vote-card { width: 100%; display: grid; justify-items: center; gap: 2px; padding: 10px 6px 8px; border-radius: 12px; position: relative; }
+.vote-card .vote-name { font-size: .9rem; overflow-wrap: anywhere; }
+.vote-card.chosen { border-color: var(--flame); box-shadow: 0 0 0 2px var(--flame), 0 0 18px #ffb34744; }
+.vote-card.mine { border-color: var(--flame); }
+.vote-card:disabled { opacity: .55; }
+.vote-card.chosen:disabled, .vote-card.mine:disabled { opacity: 1; }
+.voted-badge { position: absolute; top: 5px; right: 6px; font: 600 .6rem ui-sans-serif, system-ui, sans-serif; text-transform: uppercase; letter-spacing: .06em; color: #9bd36a; }
+.vote-actions { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; margin-top: 12px; }
+
+.verdict { text-align: center; margin-top: 16px; }
+.verdict h2 { font-size: 1.6rem; margin: 6px 0; }
+.verdict p { margin: 0 0 14px; font-size: 1.05rem; }
+.verdict.caught h2 { color: #ffd59a; }
+.verdict.wrong h2 { color: #cfe2f5; }
+.verdict.caught p { color: #c9b6ff; }
+.verdict-art { display: flex; justify-content: center; height: 130px; overflow: hidden; }
+.boat-svg .boat { animation: driftAway 7s ease-in forwards; transform-origin: 80px 60px; }
+.boat-svg .water path { animation: lap 2.4s ease-in-out infinite; }
+@keyframes driftAway {
+  0% { transform: translate(0, 0) rotate(0); opacity: 1; }
+  20% { transform: translate(6px, 2px) rotate(2deg); }
+  100% { transform: translate(60px, -6px) rotate(-2deg) scale(.55); opacity: 0; }
+}
+@keyframes lap { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-6px); } }
+.fog-art { width: 220px; height: 110px; border-radius: 50%; background: radial-gradient(ellipse, #9fb4d633, transparent 70%); animation: hover 4s ease-in-out infinite; }
+.tally { list-style: none; padding: 0; margin: 0 auto; max-width: 360px; display: grid; gap: 6px; text-align: left; }
+.tally li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); animation: rise .4s ease-out both; }
+.tally-voters { display: flex; flex-wrap: wrap; gap: 2px; justify-content: flex-end; }
+
+/* ---------- Emergency bell, mute ---------- */
+button.bell-btn { display: flex; align-items: center; justify-content: center; gap: 10px; background: #2b2216; border-color: #8a6430; color: #ffd59a; }
+button.bell-btn .bell-waves { display: none; }
+.mute {
+  position: fixed; bottom: 12px; left: 12px; z-index: 6; width: 38px; height: 38px; padding: 0;
+  border-radius: 50%; background: #151b2ccc; font-size: 1rem; line-height: 1; backdrop-filter: blur(4px);
+}
+
 /* ---------- How to play ---------- */
 .howto-card { max-height: calc(100vh - 32px); overflow-y: auto; }
 .howto-steps { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 14px; counter-reset: step; }
@@ -478,5 +557,8 @@ body.flash::after {
   .keeper-svg .flame, .shade-svg .smoke, .reveal h1, .reveal-text,
   .harbor-map .place .ring, .harbor-map .place .halo, .here h3.arrive, .shake, .tug,
   button.report, .cold-svg .frost, .cold-svg .breath, .wisp-svg, body.flash::after,
-  .snuffed-overlay, .snuffed-card .cold-svg, .bell-svg .bell-swing, .bell-svg .bell-waves { animation: none; }
+  .snuffed-overlay, .snuffed-card .cold-svg, .bell-svg .bell-swing, .bell-svg .bell-waves,
+  .chat .line, .typing::after, .boat-svg .water path, .fog-art, .tally li { animation: none; }
+  .boat-svg .boat { animation-duration: .01s; }
+  .chat { scroll-behavior: auto; }
 }

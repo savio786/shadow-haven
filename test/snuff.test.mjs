@@ -91,7 +91,11 @@ await test("a snuff, its witnesses, a wisp, the bell — and the Shades' win", a
   w2.send({ t: "move", to: "dock" });
   await w2.waitFor((m) => m.code === "not_playing");
 
-  // Back to the harbor; the cold lantern has been cleared away.
+  // Talk, agree to vote, skip — then back to the harbor, the cold lantern cleared away.
+  await w1.lobbyWhere((m) => m.meeting?.stage === "discuss", 12_000);
+  for (const c of [shade, w1, w2]) c.send({ t: "ready" });
+  await w1.lobbyWhere((m) => m.meeting?.stage === "vote");
+  for (const c of [shade, w1, w2]) c.send({ t: "vote", target: "skip" });
   const back = await w1.lobbyWhere((m) => m.phase === "playing" && m.meeting === null, 15_000);
   assert.ok(back);
   const after = await w1.waitFor((m) => m.t === "view" && m === view(w1));

@@ -10,14 +10,16 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./worker";
 import {
-  BOT_NAMES, FIRST_SNUFF_MS, GATHER_MS, LANTERNS, MAX_PLAYERS, MIN_PLAYERS, MOVE_COOLDOWN_MS, NAME_MAX,
-  REVEAL_MS, SHAPES, SNUFF_COOLDOWN_MS, shadeCount,
-  type ClientMsg, type GameResult, type Meeting, type Phase, type PublicPlayer, type PublicTask, type Role,
-  type ServerMsg,
+  BOT_NAMES, CHAT_MAX, DISCUSS_MS, FIRST_SNUFF_MS, GATHER_MS, LANTERNS, MAX_PLAYERS, MIN_PLAYERS,
+  MOVE_COOLDOWN_MS, NAME_MAX, RESULT_MS, REVEAL_MS, SHAPES, SNUFF_COOLDOWN_MS, VOTE_MS, shadeCount,
+  type ChatLine, type ClientMsg, type GameResult, type Meeting, type Phase, type PublicPlayer, type PublicTask,
+  type Role, type ServerMsg,
 } from "./shared";
 import { PATHS, START, adjacent, isLoc, type Loc } from "./harbor";
 import { chooseReport, chooseSnuff, decide, foundCold, newBrain, observe, remember, type Brain } from "./bots";
 import { TASKS, assignTasks, checkAnswer, makeChallenge, type Attempt, type Task } from "./tasks";
+import { chooseVote, mentions, tally, type MindContext } from "./minds";
+import { AiGate, DEFAULT_MODEL, speak } from "./ai";
 
 interface Player {
   id: string;
@@ -32,7 +34,10 @@ interface Player {
   loc: Loc | null;               // secret; only shared with people in the same place
   readyAt: number;               // can't move again before this (ms)
   tasks: Task[];                 // a Shade's tasks are fake
-  alive: boolean;                // false once snuffed (a wisp)
+  alive: boolean;                // false once snuffed (a wisp) or set adrift
+  adrift?: boolean;              // set adrift by vote
+  bellUsed?: boolean;            // rang the emergency bell this game
+  lastSaidAt?: number;
   snuffReadyAt: number;          // Shades: can't snuff again before this
   attempt?: Attempt;             // a task mini-game in progress (humans)
   brain?: Brain;                 // bots only
@@ -51,6 +56,8 @@ interface RoomState {
   cold: ColdLantern[];           // snuffed lanterns lying where they fell
   meeting: Meeting | null;
   revealed: string[];            // snuffed players everyone has been told about
+  votes: Record<string, string>; // secret until the verdict: voter → target or "skip"
+  chatSeq: number;
 }
 
 interface ColdLantern {
@@ -63,7 +70,7 @@ interface ColdLantern {
 function emptyRoom(): RoomState {
   return {
     code: "", created: false, createdAt: 0, phase: "lobby", hostId: null, players: [],
-    revealEndsAt: null, result: null, cold: [], meeting: null, revealed: [],
+    revealEndsAt: null, result: null, cold: [], meeting: null, revealed: [], votes: {}, chatSeq: 0,
   };
 }
 
@@ -80,10 +87,21 @@ const SAVE_EVERY = 10_000;            // during play, persist at most this often
 const MAX_MSG_BYTES = 2048;
 const MAX_MSGS_PER_SEC = 20;
 
+const MEETING_CHAT_KEEP = 60;
+const MAX_BOT_REPLIES = 2;   // per bot per meeting, when someone speaks to it
+
+interface BotTurn { id: string; at: number; replyTo?: ChatLine }
+
 export class Room extends DurableObject<Env> {
   private state!: RoomState;
   private dirty = false;
   private lastSaveAt = 0;
+  // Meeting bookkeeping that doesn't need to survive a restart.
+  private botTurns: BotTurn[] = [];
+  private botVotes: { id: string; at: number }[] = [];
+  private hunches = new Map<string, string | null>();
+  private replies = new Map<string, number>();
+  private aiGate = new AiGate();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -181,6 +199,10 @@ export class Room extends DurableObject<Env> {
       case "taskCancel": delete me.attempt; return;
       case "snuff": return this.onSnuff(ws, me, msg.target);
       case "report": return this.onReport(ws, me);
+      case "bell": return this.onBell(ws, me);
+      case "say": return this.onSay(ws, me, msg.text);
+      case "ready": return this.onReady(ws, me);
+      case "vote": return this.onVote(ws, me, msg.target);
       case "leave": return this.onLeave(ws, me);
       default: return this.send(ws, { t: "error", code: "unknown", text: "Unknown message." });
     }
@@ -212,13 +234,8 @@ export class Room extends DurableObject<Env> {
       this.refresh([START], now);
     }
 
-    if (s.phase === "meeting" && s.meeting && now >= s.meeting.endsAt) {
-      // Step 6 turns this into discussion and a vote. For now, back to work.
-      s.phase = "playing";
-      s.meeting = null;
-      lobbyChanged = true;
-      this.dirty = true;
-      this.refresh([START], now);
+    if (s.phase === "meeting" && s.meeting) {
+      if (this.meetingTick(now)) lobbyChanged = true;
     }
 
     if (s.phase === "playing" && this.anyHumanHere()) {
@@ -400,6 +417,8 @@ export class Room extends DurableObject<Env> {
       p.readyAt = playFrom;
       p.tasks = assignTasks();
       p.alive = true;
+      p.adrift = false;
+      p.bellUsed = false;
       p.snuffReadyAt = playFrom + FIRST_SNUFF_MS;
       delete p.attempt;
       delete p.working;
@@ -435,8 +454,11 @@ export class Room extends DurableObject<Env> {
     this.state.cold = [];
     this.state.meeting = null;
     this.state.revealed = [];
+    this.state.votes = {};
     for (const p of this.state.players) {
       p.alive = true;
+      p.adrift = false;
+      p.bellUsed = false;
       p.role = null;
       p.loc = null;
       p.readyAt = 0;
@@ -639,31 +661,274 @@ export class Room extends DurableObject<Env> {
     await this.scheduleAlarm();
   }
 
+  /** The emergency bell hangs in the Market Square. Each player may ring it once. */
+  private async onBell(ws: WebSocket, me: Player) {
+    if (this.state.phase !== "playing" || !me.alive) {
+      return this.send(ws, { t: "error", code: "cant_bell", text: "You can't ring the bell now." });
+    }
+    if (me.loc !== START) return this.send(ws, { t: "error", code: "not_here", text: "The bell hangs in the Market Square." });
+    if (me.bellUsed) return this.send(ws, { t: "error", code: "bell_used", text: "You've already rung the bell this game." });
+    me.bellUsed = true;
+    this.startMeeting(me, Date.now(), "bell");
+    await this.save();
+    this.broadcastLobby();
+    await this.scheduleAlarm();
+  }
+
   /** Ring the Harbor Bell: everyone gathers in the square and the snuffed are named. */
-  private startMeeting(reporter: Player, now: number) {
+  private startMeeting(reporter: Player, now: number, kind: "cold" | "bell" = "cold") {
     const s = this.state;
     const loc = reporter.loc!;
-    const endsAt = now + GATHER_MS;
+    const stageEndsAt = now + GATHER_MS;
     s.phase = "meeting";
+    s.votes = {};
     s.meeting = {
+      kind,
       reporter: reporter.id,
       loc,
-      found: s.cold.filter((c) => c.loc === loc).map((c) => c.victim),
-      snuffed: s.players.filter((p) => !p.alive).map((p) => p.id),
-      endsAt,
+      found: kind === "cold" ? s.cold.filter((c) => c.loc === loc).map((c) => c.victim) : [],
+      snuffed: s.players.filter((p) => !p.alive && !p.adrift).map((p) => p.id),
+      stage: "gather",
+      stageEndsAt,
+      endsAt: stageEndsAt,
+      chat: [],
+      voted: [],
+      ready: [],
+      result: null,
     };
     s.revealed = s.meeting.snuffed;
+    // Bots that find out now who was found note who they saw nearby.
+    for (const c of s.cold.filter((c) => c.loc === loc)) {
+      for (const p of s.players) if (p.brain && p.alive && p.loc === loc) foundCold(p.brain, c.loc, c.victim, now, p.id);
+    }
     s.cold = []; // the harbor is tidied while everyone talks
     for (const p of s.players) {
       p.loc = START;
-      p.readyAt = endsAt;
+      p.readyAt = Number.MAX_SAFE_INTEGER; // nobody walks during a meeting
       delete p.attempt;
       delete p.working;
-      if (p.role === "shade") p.snuffReadyAt = Math.max(p.snuffReadyAt, endsAt + FIRST_SNUFF_MS);
-      if (p.brain) p.brain.nextMoveAt = endsAt + 800 + Math.random() * 2500;
     }
+    this.botTurns = [];
+    this.botVotes = [];
+    this.hunches.clear();
+    this.replies.clear();
     this.dirty = true;
     this.refresh([START], now);
+  }
+
+  /** Move the meeting along. Returns true when everyone should get a fresh update. */
+  private meetingTick(now: number): boolean {
+    const s = this.state;
+    const m = s.meeting!;
+    let changed = false;
+
+    if (m.stage === "gather" && now >= m.stageEndsAt) {
+      this.setStage("discuss", now + DISCUSS_MS);
+      this.pushChat("", "Talk it over. Who do you suspect — and why?");
+      this.scheduleBotTalk(now);
+      changed = true;
+    } else if (m.stage === "discuss" && now >= m.stageEndsAt) {
+      this.startVote(now);
+      changed = true;
+    } else if (m.stage === "vote" && (now >= m.stageEndsAt || this.everyoneVoted())) {
+      this.revealVerdict(now);
+      changed = true;
+    } else if (m.stage === "result" && now >= m.stageEndsAt) {
+      this.endMeeting(now);
+      return true;
+    }
+
+    // Bots speak when their turn comes (talking is allowed until the verdict).
+    if ((m.stage === "discuss" || m.stage === "vote")) {
+      const due = this.botTurns.filter((t) => t.at <= now);
+      this.botTurns = this.botTurns.filter((t) => t.at > now);
+      for (const turn of due) this.botSpeak(turn);
+    }
+    // Bots vote when their moment comes.
+    if (m.stage === "vote") {
+      const due = this.botVotes.filter((v) => v.at <= now);
+      this.botVotes = this.botVotes.filter((v) => v.at > now);
+      for (const v of due) {
+        const bot = this.player(v.id);
+        if (!bot?.alive || s.votes[bot.id]) continue;
+        const target = chooseVote(this.mindFor(bot), this.hunches.get(bot.id) ?? null);
+        this.castVote(bot, target);
+        changed = true;
+      }
+      if (this.everyoneVoted()) {
+        this.revealVerdict(now);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  private setStage(stage: Meeting["stage"], endsAt: number) {
+    const m = this.state.meeting!;
+    m.stage = stage;
+    m.stageEndsAt = endsAt;
+    m.endsAt = endsAt;
+    this.dirty = true;
+  }
+
+  private scheduleBotTalk(now: number) {
+    const bots = shuffle(this.state.players.filter((p) => p.isBot && p.alive));
+    let at = now + 2500;
+    for (const b of bots) {
+      this.botTurns.push({ id: b.id, at });
+      at += 3200 + Math.random() * 2400;
+    }
+    // Some speak again later, once there's more to react to.
+    for (const b of bots) {
+      if (Math.random() < 0.5) this.botTurns.push({ id: b.id, at: now + DISCUSS_MS * (0.55 + Math.random() * 0.3) });
+    }
+  }
+
+  /** Ask a bot for a line (AI first, evidence-based fallback), then say it. */
+  private botSpeak(turn: BotTurn) {
+    const bot = this.player(turn.id);
+    const m = this.state.meeting;
+    if (!bot?.alive || !bot.brain || !m) return;
+    this.broadcast({ t: "typing", who: bot.id });
+    const ctx = this.mindFor(bot, turn.replyTo);
+    const model = this.env.AI_MODEL || DEFAULT_MODEL;
+    speak(this.env.AI, model, ctx, this.aiGate).then(async (voice) => {
+      const live = this.state.meeting;
+      if (!live || live !== m || (live.stage !== "discuss" && live.stage !== "vote") || !bot.alive) return;
+      if (voice.suspect) this.hunches.set(bot.id, voice.suspect);
+      this.pushChat(bot.id, voice.say);
+      await this.scheduleAlarm();
+    }).catch(() => {});
+  }
+
+  private mindFor(bot: Player, replyTo?: ChatLine): MindContext {
+    const s = this.state;
+    const m = s.meeting!;
+    return {
+      self: { id: bot.id, name: bot.name, role: bot.role!, personality: bot.brain!.personality, alive: bot.alive },
+      brain: bot.brain!,
+      allies: this.alliesOf(bot),
+      names: Object.fromEntries(s.players.map((p) => [p.id, p.name])),
+      living: s.players.filter((p) => p.alive).map((p) => p.id),
+      meeting: { kind: m.kind, reporter: m.reporter, loc: m.loc as Loc, found: m.found },
+      chat: m.chat,
+      replyTo,
+      now: Date.now(),
+    };
+  }
+
+  private pushChat(who: string, text: string) {
+    const m = this.state.meeting;
+    if (!m) return;
+    const line: ChatLine = { id: ++this.state.chatSeq, who, text, at: Date.now() };
+    m.chat.push(line);
+    if (m.chat.length > MEETING_CHAT_KEEP) m.chat.splice(0, m.chat.length - MEETING_CHAT_KEEP);
+    this.dirty = true;
+    this.broadcast({ t: "chat", line });
+  }
+
+  private async onSay(ws: WebSocket, me: Player, raw: unknown) {
+    const m = this.state.meeting;
+    if (this.state.phase !== "meeting" || !m || m.stage === "result") {
+      return this.send(ws, { t: "error", code: "not_meeting", text: "You can talk when the bell rings." });
+    }
+    if (!me.alive) return this.send(ws, { t: "error", code: "wisp", text: "Wisps can't be heard by the living." });
+    const now = Date.now();
+    if (me.lastSaidAt && now - me.lastSaidAt < 1200) {
+      return this.send(ws, { t: "error", code: "slow_down", text: "Slow down a little." });
+    }
+    const text = String(raw ?? "").replace(/[\u0000-\u001f\u007f<>]/g, "").replace(/\s+/g, " ").trim().slice(0, CHAT_MAX);
+    if (!text) return;
+    me.lastSaidAt = now;
+    const line = { id: this.state.chatSeq + 1, who: me.id, text, at: now };
+    this.pushChat(me.id, text);
+    // Speak to a bot by name and it will answer.
+    for (const bot of this.state.players) {
+      if (!bot.isBot || !bot.alive || !mentions(text, bot.name)) continue;
+      const used = this.replies.get(bot.id) ?? 0;
+      if (used >= MAX_BOT_REPLIES) continue;
+      this.replies.set(bot.id, used + 1);
+      this.botTurns = this.botTurns.filter((t) => t.id !== bot.id || t.at > now + 15_000);
+      this.botTurns.push({ id: bot.id, at: now + 1800 + Math.random() * 1800, replyTo: line });
+    }
+    await this.scheduleAlarm();
+  }
+
+  /** Living humans can agree to vote early; bots never hold things up. */
+  private async onReady(ws: WebSocket, me: Player) {
+    const m = this.state.meeting;
+    if (!m || m.stage !== "discuss" || !me.alive) return;
+    if (!m.ready.includes(me.id)) m.ready.push(me.id);
+    const waiting = this.state.players.filter((p) => !p.isBot && p.alive && this.isConnected(p.id) && !m.ready.includes(p.id));
+    if (!waiting.length) this.startVote(Date.now());
+    this.broadcastLobby();
+    await this.scheduleAlarm();
+  }
+
+  private startVote(now: number) {
+    this.setStage("vote", now + VOTE_MS);
+    this.pushChat("", "Time to vote. Pick who to set adrift — or skip.");
+    for (const b of this.state.players) {
+      if (b.isBot && b.alive) this.botVotes.push({ id: b.id, at: now + 2500 + Math.random() * (VOTE_MS * 0.5) });
+    }
+  }
+
+  private async onVote(ws: WebSocket, me: Player, target: unknown) {
+    const s = this.state;
+    const m = s.meeting;
+    if (!m || m.stage !== "vote") return this.send(ws, { t: "error", code: "not_voting", text: "It isn't time to vote." });
+    if (!me.alive) return this.send(ws, { t: "error", code: "wisp", text: "Wisps can't vote." });
+    if (s.votes[me.id]) return this.send(ws, { t: "error", code: "voted", text: "You've already voted." });
+    const t = String(target ?? "");
+    const ok = t === "skip" || (t !== me.id && this.player(t)?.alive);
+    if (!ok) return this.send(ws, { t: "error", code: "bad_vote", text: "You can't vote for them." });
+    this.castVote(me, t);
+    if (this.everyoneVoted()) this.revealVerdict(Date.now());
+    this.broadcastLobby();
+    await this.scheduleAlarm();
+  }
+
+  private castVote(p: Player, target: string) {
+    const m = this.state.meeting!;
+    this.state.votes[p.id] = target;
+    if (!m.voted.includes(p.id)) m.voted.push(p.id);
+    this.dirty = true;
+  }
+
+  private everyoneVoted() {
+    return this.state.players.filter((p) => p.alive).every((p) => this.state.votes[p.id]);
+  }
+
+  /** Count the votes and set someone adrift (or not). The room learns if they were a Shade. */
+  private revealVerdict(now: number) {
+    const s = this.state;
+    const m = s.meeting!;
+    if (m.stage === "result") return;
+    const { adrift, tie } = tally(s.votes);
+    const who = this.player(adrift);
+    if (who) {
+      who.alive = false;
+      who.adrift = true;
+      if (!s.revealed.includes(who.id)) s.revealed = [...s.revealed, who.id];
+    }
+    m.result = { adrift: who?.id ?? null, wasShade: who ? who.role === "shade" : null, votes: { ...s.votes }, tie };
+    this.botVotes = [];
+    this.botTurns = [];
+    this.setStage("result", now + RESULT_MS);
+  }
+
+  private endMeeting(now: number) {
+    const s = this.state;
+    s.phase = "playing";
+    s.meeting = null;
+    s.votes = {};
+    for (const p of s.players) {
+      p.readyAt = now;
+      if (p.role === "shade") p.snuffReadyAt = Math.max(p.snuffReadyAt, now + FIRST_SNUFF_MS);
+      if (p.brain) p.brain.nextMoveAt = now + 600 + Math.random() * 2500;
+    }
+    this.dirty = true;
+    if (!this.checkWin()) this.refresh([START], now);
   }
 
   /** Who this player can see where they stand: the living see the living; wisps see everyone. */
@@ -755,6 +1020,10 @@ export class Room extends DurableObject<Env> {
     const living = this.state.players.filter((p) => p.alive);
     const shades = living.filter((p) => p.role === "shade").length;
     const keepers = living.length - shades;
+    if (shades === 0) {
+      this.finish({ winner: "keepers", reason: "Every Shade has been set adrift. The harbor lights burn safe tonight." });
+      return true;
+    }
     if (shades >= keepers) {
       this.finish({ winner: "shades", reason: "The Shades now match the Keepers lantern for lantern. The harbor goes dark." });
       return true;
@@ -881,6 +1150,7 @@ export class Room extends DurableObject<Env> {
       progress: ["playing", "meeting", "ended"].includes(s.phase) ? this.progress() : null,
       result: s.result,
       meeting: s.meeting,
+      now: Date.now(),
       players: this.state.players.map((p) => ({
         id: p.id,
         name: p.name,
@@ -890,7 +1160,9 @@ export class Room extends DurableObject<Env> {
         isHost: p.id === this.state.hostId,
         connected: p.isBot || this.isConnected(p.id, ignore),
         // Snuffs become public at the bell, and everyone's fate at the end.
-        snuffed: !p.alive && (s.phase === "ended" || s.revealed.includes(p.id)),
+        snuffed: !p.alive && !p.adrift && (s.phase === "ended" || s.revealed.includes(p.id)),
+        adrift: !!p.adrift,
+        bellUsed: !!p.bellUsed,
       })),
     };
   }
@@ -924,7 +1196,11 @@ export class Room extends DurableObject<Env> {
     const s = this.state;
     const times: number[] = [];
     if (s.revealEndsAt) times.push(s.revealEndsAt);
-    if (s.meeting) times.push(s.meeting.endsAt);
+    if (s.meeting) {
+      times.push(s.meeting.stageEndsAt);
+      for (const t of this.botTurns) times.push(t.at);
+      for (const v of this.botVotes) times.push(v.at);
+    }
     if (s.phase === "playing" && this.anyHumanHere()) {
       for (const p of s.players) if (p.brain) times.push(p.brain.nextMoveAt);
     }

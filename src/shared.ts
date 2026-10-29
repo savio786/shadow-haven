@@ -57,15 +57,43 @@ export const FIRST_SNUFF_MS = 15_000;
 /** …and then has to wait this long between snuffs. */
 export const SNUFF_COOLDOWN_MS = 25_000;
 
-/** How long everyone gathers at the bell after a cold lantern is reported. */
-export const GATHER_MS = 9000;
+/** A meeting: gather at the bell, talk it over, vote, hear the verdict. */
+export const GATHER_MS = 6000;
+export const DISCUSS_MS = 45_000;
+export const VOTE_MS = 25_000;
+export const RESULT_MS = 8000;
+
+export const CHAT_MAX = 140;
+
+export type MeetingStage = "gather" | "discuss" | "vote" | "result";
+
+export interface ChatLine {
+  id: number;
+  who: string;        // player id ("" for the harbor itself)
+  text: string;
+  at: number;
+}
+
+export interface VoteResult {
+  adrift: string | null;          // who was set adrift, if anyone
+  wasShade: boolean | null;
+  votes: Record<string, string>;  // voter → target id or "skip"
+  tie: boolean;
+}
 
 export interface Meeting {
+  kind: "cold" | "bell";
   reporter: string;  // who rang the bell
-  loc: string;       // where the cold lantern was found
+  loc: string;       // where it was rung / the cold lantern was found
   found: string[];   // whose lanterns were found there
   snuffed: string[]; // everyone snuffed so far (now public)
-  endsAt: number;
+  stage: MeetingStage;
+  stageEndsAt: number;
+  endsAt: number;    // same as stageEndsAt (kept for older clients)
+  chat: ChatLine[];  // the most recent lines
+  voted: string[];   // who has voted (not for whom, until the result)
+  ready: string[];   // who is ready to vote early
+  result: VoteResult | null;
 }
 
 /** 4–6 Keepers → 1 Shade, 7–10 → 2 Shades. */
@@ -75,6 +103,8 @@ export function shadeCount(players: number) {
 
 export interface PublicPlayer {
   snuffed?: boolean; // only once it's public (after a gathering)
+  adrift?: boolean;  // set adrift by vote
+  bellUsed?: boolean; // has rung the emergency bell
   id: string;
   name: string;
   lantern: string; // LANTERNS[].id
@@ -98,6 +128,10 @@ export type ClientMsg =
   | { t: "taskCancel" }
   | { t: "snuff"; target: string }
   | { t: "report" }
+  | { t: "bell" }
+  | { t: "say"; text: string }
+  | { t: "ready" }
+  | { t: "vote"; target: string }
   | { t: "leave" }
   | { t: "ping" };
 
@@ -116,6 +150,7 @@ export type ServerMsg =
       progress: number | null;     // 0..1 share of Keeper tasks done, while a game is on
       result: GameResult | null;   // once the game has ended
       meeting: Meeting | null;     // while everyone is gathered at the bell
+      now: number;                 // server clock, so timers line up
     }
   // Sent privately to one player. Never broadcast.
   | { t: "role"; role: Role; allies: string[] }
@@ -141,6 +176,10 @@ export type ServerMsg =
   | { t: "taskResult"; id: string; ok: boolean; text?: string }
   // Sent to everyone in a place when something there is plain to see.
   | { t: "witness"; kind: "lamp" | "snuff"; who: string; victim?: string; loc: string; text: string }
+  // A new line in the meeting chat (everyone gets it; only the living may speak).
+  | { t: "chat"; line: ChatLine }
+  // A bot is composing a line.
+  | { t: "typing"; who: string }
   | { t: "notice"; text: string }
   | { t: "error"; code: string; text: string }
   | { t: "pong" };

@@ -59,6 +59,27 @@ export function wispSVG({ lantern = "amber", size = 40 } = {}) {
   </svg>`;
 }
 
+/** A little rowing boat carrying someone's lantern out into the fog. */
+export function boatSVG({ lantern = "amber", shade = false, size = 160 } = {}) {
+  const flame = shade ? "#9b7bff" : (LANTERNS[lantern] ?? LANTERNS.amber);
+  const h = Math.round(size * 0.6);
+  return `<svg class="boat-svg" viewBox="0 0 160 96" width="${size}" height="${h}" aria-hidden="true">
+    <g class="boat">
+      <circle cx="80" cy="34" r="22" fill="${flame}" opacity=".18"/>
+      <rect x="77" y="18" width="6" height="3" rx="1" fill="#3a3f4b"/>
+      <path d="M72 22h16l2 12-2 12H72l-2-12z" fill="#1d2230" stroke="#8a93a6" stroke-width="2"/>
+      <path class="flame" d="M80 26c4 5 4 10 0 13-4-3-4-8 0-13z" fill="${flame}"/>
+      <path d="M40 56h80l-12 16H52z" fill="#5a3f26"/>
+      <path d="M40 56h80l-3 4H43z" fill="#7a5634"/>
+      <path d="M80 46v10" stroke="#3a3f4b" stroke-width="2"/>
+    </g>
+    <g class="water" stroke="#2e5578" stroke-width="2" fill="none" stroke-linecap="round">
+      <path d="M20 80q10-6 20 0t20 0t20 0t20 0t20 0t20 0"/>
+      <path d="M30 90q10-5 20 0t20 0t20 0t20 0t20 0" opacity=".6"/>
+    </g>
+  </svg>`;
+}
+
 /** The Harbor Bell. */
 export function bellSVG({ size = 120 } = {}) {
   return `<svg class="bell-svg" viewBox="0 0 120 120" width="${size}" height="${size}" aria-hidden="true">

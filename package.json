@@ -1,11 +1,12 @@
 {
   "name": "shadow-haven",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "private": true,
-  "description": "Shadow Haven \u2014 a multiplayer social-deduction game of Lantern Keepers and hidden Shades.",
+  "description": "Shadow Haven — a multiplayer social-deduction game of Lantern Keepers and hidden Shades.",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "dev:local": "wrangler dev --local",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "check": "tsc --noEmit && wrangler deploy --dry-run --outdir dist",
