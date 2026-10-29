@@ -36,6 +36,9 @@ export type Role = "keeper" | "shade";
 /** How long the private role reveal stays on screen before play begins. */
 export const REVEAL_MS = 7000;
 
+/** Walking between locations takes this long before you can move again. */
+export const MOVE_COOLDOWN_MS = 1500;
+
 /** 4–6 Keepers → 1 Shade, 7–10 → 2 Shades. */
 export function shadeCount(players: number) {
   return players >= 7 ? 2 : 1;
@@ -59,6 +62,7 @@ export type ClientMsg =
   | { t: "removePlayer"; id: string }
   | { t: "start" }
   | { t: "endGame" }
+  | { t: "move"; to: string }
   | { t: "leave" }
   | { t: "ping" };
 
@@ -77,6 +81,8 @@ export type ServerMsg =
     }
   // Sent privately to one player. Never broadcast.
   | { t: "role"; role: Role; allies: string[] }
+  // Private: where you are, where you can go, and who is here with you.
+  | { t: "view"; here: string; neighbors: string[]; present: string[]; readyAt: number; now: number }
   | { t: "notice"; text: string }
   | { t: "error"; code: string; text: string }
   | { t: "pong" };

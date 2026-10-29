@@ -1,5 +1,6 @@
 // Shadow Haven — browser client (step 1: home + lobby).
-import { keeperSVG, shadeSVG } from "./lanterns.js";
+import { keeperSVG, shadeSVG, LANTERNS } from "./lanterns.js";
+import { harborSVG, PLACES } from "./harbor.js";
 
 const MIN_PLAYERS = 4;
 const REVEAL_MS = 7000;
@@ -28,6 +29,8 @@ let me = null;
 let lobby = null;
 let myRole = null;   // "keeper" | "shade" — only ever our own
 let allies = [];     // fellow Shades' ids (only if we're a Shade)
+let view = null;     // { here, neighbors, present, readyAtLocal } — what we can see
+let readyTimer = null;
 let retry = 0;
 let retryTimer = null;
 let pingTimer = null;
@@ -170,7 +173,7 @@ function onMessage(msg) {
     case "lobby":
       // Back in the lobby means last game's role is gone. (Roles arrive just
       // before the "reveal" update, so only clear when the room says lobby.)
-      if (msg.phase === "lobby" && lobby?.phase !== "lobby") { myRole = null; allies = []; }
+      if (msg.phase === "lobby" && lobby?.phase !== "lobby") { myRole = null; allies = []; view = null; }
       lobby = msg;
       renderPhase();
       break;
@@ -179,6 +182,19 @@ function onMessage(msg) {
       allies = msg.allies || [];
       if (lobby && lobby.phase !== "lobby") renderPhase();
       break;
+    case "view": {
+      // Convert the server's "ready at" into our own clock.
+      const wait = Math.max(0, msg.readyAt - msg.now);
+      const arrived = view && view.here !== msg.here;
+      view = { here: msg.here, neighbors: msg.neighbors, present: msg.present, readyAtLocal: Date.now() + wait };
+      clearTimeout(readyTimer);
+      if (wait > 0) readyTimer = setTimeout(renderHarbor, wait + 30);
+      if (lobby?.phase === "playing") {
+        renderHarbor();
+        if (arrived) $("here-name").classList.add("arrive");
+      }
+      break;
+    }
     case "notice":
       toast(msg.text);
       break;
@@ -201,6 +217,7 @@ function backHome(error) {
   lobby = null;
   myRole = null;
   allies = [];
+  view = null;
   roomCode = null;
   banner("");
   if (location.pathname !== "/") history.pushState({}, "", "/");
@@ -261,12 +278,71 @@ function renderReveal() {
   }));
 }
 
-// ---------- In game (placeholder until the harbor map) ----------
+// ---------- The harbor ----------
+function renderHarbor() {
+  if (!view || !lobby) return;
+  const self = lobby.players.find((p) => p.id === me);
+  const canMove = Date.now() >= view.readyAtLocal;
+  const flame = myRole === "shade" ? "#9b7bff" : (LANTERNS[self?.lantern] ?? "#ffb347");
+
+  // Only rebuild the map when it actually looks different, so a tap is never
+  // lost to a redraw caused by someone else walking past.
+  const mapKey = [view.here, view.neighbors.join(), canMove, flame].join("|");
+  if ($("map").dataset.key !== mapKey) {
+    $("map").innerHTML = harborSVG({ here: view.here, neighbors: view.neighbors, canMove, flame });
+    $("map").dataset.key = mapKey;
+  }
+  $("walking").hidden = canMove;
+  $("move-hint").textContent = canMove
+    ? "Tap a glowing place to walk there."
+    : "Catching your breath…";
+
+  const place = PLACES[view.here];
+  const nameEl = $("here-name");
+  nameEl.textContent = place?.name ?? view.here;
+  $("here-text").textContent = place?.text ?? "";
+
+  const list = $("here-list");
+  list.innerHTML = "";
+  const company = view.present.map((id) => lobby.players.find((p) => p.id === id)).filter(Boolean);
+  if (!company.length) {
+    const li = document.createElement("li");
+    li.className = "alone";
+    li.textContent = "Nobody. Just you and the fog.";
+    list.append(li);
+  }
+  for (const p of company) {
+    const li = document.createElement("li");
+    li.innerHTML = keeperSVG({ lantern: p.lantern, shape: p.shape, dim: !p.connected, size: 30 });
+    const n = document.createElement("span");
+    n.textContent = p.name;
+    li.append(n);
+    if (allies.includes(p.id)) li.append(tag("Shade", "shade"));
+    if (p.isBot) li.append(tag("Bot", "bot"));
+    list.append(li);
+  }
+  requestAnimationFrame(() => nameEl.classList.remove("arrive"));
+}
+
+function onMapActivate(e) {
+  const target = e.target.closest("[data-place]");
+  if (!target) return;
+  if (e.type === "keydown" && e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  if (!view || Date.now() < view.readyAtLocal) return;
+  send({ t: "move", to: target.dataset.place });
+  // Show the step straight away; the server's reply confirms it.
+  view.readyAtLocal = Date.now() + 1500;
+  renderHarbor();
+}
+
+// ---------- In game ----------
 function renderGame() {
   const isHost = lobby.hostId === me;
   $("game-code").textContent = roomCode;
   $("game-host").hidden = !isHost;
   document.body.classList.toggle("is-shade", myRole === "shade");
+  renderHarbor();
 
   $("game-players").innerHTML = "";
   for (const p of lobby.players) {
@@ -391,6 +467,8 @@ function initLobby() {
     if (confirm("End this game for everyone and go back to the lobby?")) send({ t: "endGame" });
   });
   $("peek").addEventListener("click", peek);
+  $("map").addEventListener("click", onMapActivate);
+  $("map").addEventListener("keydown", onMapActivate);
   $("copy-link").addEventListener("click", async () => {
     const link = `${location.origin}/r/${roomCode}`;
     try {

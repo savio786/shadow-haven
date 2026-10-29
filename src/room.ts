@@ -1,13 +1,18 @@
 // One Durable Object instance = one game room.
-// Step 1: lobby — players join over WebSockets (Hibernation API), the host can
-// add bot Keepers, and everyone sees the live player list.
+//
+// Lobby → reveal → playing. Players connect over WebSockets (Hibernation API).
+// While playing, players walk the harbor and only ever learn who is in the
+// same location as them ("fog"). Bots think on a timer driven by the room's
+// alarm and see exactly what a human in their place would see.
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./worker";
 import {
-  BOT_NAMES, LANTERNS, MAX_PLAYERS, MIN_PLAYERS, NAME_MAX, REVEAL_MS, SHAPES, shadeCount,
+  BOT_NAMES, LANTERNS, MAX_PLAYERS, MIN_PLAYERS, MOVE_COOLDOWN_MS, NAME_MAX, REVEAL_MS, SHAPES, shadeCount,
   type ClientMsg, type Phase, type PublicPlayer, type Role, type ServerMsg,
 } from "./shared";
+import { PATHS, START, adjacent, isLoc, type Loc } from "./harbor";
+import { decide, newBrain, observe, type Brain } from "./bots";
 
 interface Player {
   id: string;
@@ -19,6 +24,9 @@ interface Player {
   joinedAt: number;
   disconnectedAt: number | null; // humans only
   role: Role | null;             // secret; only ever sent to this player
+  loc: Loc | null;               // secret; only shared with people in the same place
+  readyAt: number;               // can't move again before this (ms)
+  brain?: Brain;                 // bots only
 }
 
 interface RoomState {
@@ -44,11 +52,14 @@ interface SocketInfo {
 const EMPTY_ROOM_TTL = 10 * 60_000;   // delete a room nobody is connected to
 const LOBBY_SEAT_HOLD = 2 * 60_000;   // keep a dropped player's seat this long
 const HOST_HANDOVER = 60_000;         // pass host on if the host is gone this long
+const SAVE_EVERY = 10_000;            // during play, persist at most this often
 const MAX_MSG_BYTES = 2048;
 const MAX_MSGS_PER_SEC = 20;
 
 export class Room extends DurableObject<Env> {
   private state!: RoomState;
+  private dirty = false;
+  private lastSaveAt = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -58,7 +69,9 @@ export class Room extends DurableObject<Env> {
       const saved = await ctx.storage.get<RoomState>("state");
       // Fill in any fields added since the room was saved.
       this.state = { ...emptyRoom(), ...saved };
-      this.state.players = this.state.players.map((p) => ({ ...p, role: p.role ?? null }));
+      this.state.players = this.state.players.map((p) => ({
+        ...p, role: p.role ?? null, loc: p.loc ?? null, readyAt: p.readyAt ?? 0,
+      }));
     });
   }
 
@@ -137,6 +150,7 @@ export class Room extends DurableObject<Env> {
       case "removePlayer": return this.onRemove(ws, me, msg.id);
       case "start": return this.onStart(ws, me);
       case "endGame": return this.onEndGame(ws, me);
+      case "move": return this.onMove(ws, me, msg.to);
       case "leave": return this.onLeave(ws, me);
       default: return this.send(ws, { t: "error", code: "unknown", text: "Unknown message." });
     }
@@ -150,41 +164,59 @@ export class Room extends DurableObject<Env> {
     await this.onSocketGone(ws);
   }
 
-  // Periodic housekeeping: free seats of players who dropped, hand over host,
-  // and delete rooms nobody is using.
+  /**
+   * The room's heartbeat: ends the reveal, lets bots think, frees seats of
+   * players who dropped, hands over host, saves, and deletes empty rooms.
+   */
   async alarm() {
     const now = Date.now();
     const s = this.state;
+    let lobbyChanged = false;
 
     if (s.phase === "reveal" && s.revealEndsAt && now >= s.revealEndsAt) {
       s.phase = "playing";
       s.revealEndsAt = null;
+      lobbyChanged = true;
+      this.dirty = true;
+      // Everyone opens their eyes in the market square.
+      this.refresh([START], now);
     }
+
+    if (s.phase === "playing" && this.anyHumanHere()) this.botTick(now);
 
     if (s.phase === "lobby") {
       const before = s.players.length;
       s.players = s.players.filter(
         (p) => p.isBot || this.isConnected(p.id) || !p.disconnectedAt || now - p.disconnectedAt < LOBBY_SEAT_HOLD,
       );
-      if (s.players.length !== before && !this.player(s.hostId)) s.hostId = null;
+      if (s.players.length !== before) {
+        lobbyChanged = true;
+        this.dirty = true;
+        if (!this.player(s.hostId)) s.hostId = null;
+      }
     }
 
     const host = this.player(s.hostId);
     if (!host || (!this.isConnected(host.id) && host.disconnectedAt && now - host.disconnectedAt >= HOST_HANDOVER)) {
       const next = this.humans().find((p) => this.isConnected(p.id));
-      if (next) s.hostId = next.id;
+      if (next && next.id !== s.hostId) {
+        s.hostId = next.id;
+        lobbyChanged = true;
+        this.dirty = true;
+      }
     }
 
-    const anyoneHere = this.humans().some((p) => this.isConnected(p.id));
-    const lastSeen = Math.max(s.createdAt, ...this.humans().map((p) => p.disconnectedAt ?? 0));
-    if (!anyoneHere && now - lastSeen >= EMPTY_ROOM_TTL) {
+    if (!this.anyHumanHere() && now - this.lastHumanSeen() >= EMPTY_ROOM_TTL) {
       await this.ctx.storage.deleteAll();
       this.state = emptyRoom();
+      this.dirty = false;
       return;
     }
 
-    await this.save();
-    this.broadcastLobby();
+    if (this.dirty && (lobbyChanged || s.phase !== "playing" || now - this.lastSaveAt >= SAVE_EVERY)) {
+      await this.save();
+    }
+    if (lobbyChanged) this.broadcastLobby();
     await this.scheduleAlarm();
   }
 
@@ -232,6 +264,8 @@ export class Room extends DurableObject<Env> {
         joinedAt: Date.now(),
         disconnectedAt: null,
         role: null,
+        loc: null,
+        readyAt: 0,
       };
       this.state.players.push(me);
     }
@@ -243,9 +277,12 @@ export class Room extends DurableObject<Env> {
     ws.serializeAttachment(info);
     await this.save();
     this.send(ws, { t: "welcome", you: me.id, code: this.state.code });
-    // A player rejoining mid-game gets their own role back (and only theirs).
+    // A player rejoining mid-game gets their own role and surroundings back.
     if (me.role) this.sendRole(ws, me);
+    if (this.state.phase === "playing" && me.loc) this.sendView(ws, me);
     this.broadcastLobby();
+    // Bots pause while nobody is connected; make sure they wake up again.
+    await this.scheduleAlarm();
   }
 
   private async onRename(ws: WebSocket, me: Player, raw: string) {
@@ -272,6 +309,8 @@ export class Room extends DurableObject<Env> {
       joinedAt: Date.now(),
       disconnectedAt: null,
       role: null,
+      loc: null,
+      readyAt: 0,
     });
     await this.save();
     this.broadcastLobby();
@@ -301,10 +340,17 @@ export class Room extends DurableObject<Env> {
     // Pick the Shades uniformly at random from everyone, bots included.
     const order = shuffle(this.state.players.map((p) => p.id));
     const shades = new Set(order.slice(0, shadeCount(this.state.players.length)));
-    for (const p of this.state.players) p.role = shades.has(p.id) ? "shade" : "keeper";
+    const now = Date.now();
+    const playFrom = now + REVEAL_MS;
+    for (const p of this.state.players) {
+      p.role = shades.has(p.id) ? "shade" : "keeper";
+      p.loc = START;
+      p.readyAt = playFrom;
+      if (p.isBot) p.brain = newBrain(playFrom);
+    }
 
     this.state.phase = "reveal";
-    this.state.revealEndsAt = Date.now() + REVEAL_MS;
+    this.state.revealEndsAt = playFrom;
     await this.save();
 
     // Each human hears only their own role.
@@ -321,11 +367,32 @@ export class Room extends DurableObject<Env> {
     if (this.state.phase === "lobby") return;
     this.state.phase = "lobby";
     this.state.revealEndsAt = null;
-    for (const p of this.state.players) p.role = null;
+    for (const p of this.state.players) {
+      p.role = null;
+      p.loc = null;
+      p.readyAt = 0;
+      delete p.brain;
+    }
     await this.save();
     this.broadcast({ t: "notice", text: "The host called everyone back to the lobby." });
     this.broadcastLobby();
     await this.scheduleAlarm();
+  }
+
+  private async onMove(ws: WebSocket, me: Player, to: unknown) {
+    if (this.state.phase !== "playing" || !me.loc) {
+      return this.send(ws, { t: "error", code: "not_playing", text: "You can't move right now." });
+    }
+    if (!isLoc(to) || !adjacent(me.loc, to)) {
+      return this.send(ws, { t: "error", code: "bad_move", text: "There's no path from here to there." });
+    }
+    const now = Date.now();
+    if (now < me.readyAt) {
+      // Too soon: just remind them where they are and when they can go.
+      return this.sendView(ws, me);
+    }
+    this.moveTo(me, to, now);
+    await this.scheduleAlarm(); // make sure the move gets saved soon
   }
 
   private async onLeave(ws: WebSocket, me: Player) {
@@ -370,6 +437,58 @@ export class Room extends DurableObject<Env> {
     await this.scheduleAlarm();
   }
 
+  // ---------- The harbor ----------
+
+  /** Move a player (human or bot) and update everyone who can see it happen. */
+  private moveTo(p: Player, to: Loc, now: number) {
+    const from = p.loc;
+    p.loc = to;
+    p.readyAt = now + MOVE_COOLDOWN_MS;
+    if (p.brain) p.brain.cameFrom = from;
+    this.dirty = true;
+    this.refresh(from ? [from, to] : [to], now);
+  }
+
+  /** Everyone standing in these places looks around again. */
+  private refresh(locs: Loc[], now: number) {
+    const sockets = this.socketsByPlayer();
+    for (const p of this.state.players) {
+      if (!p.loc || !locs.includes(p.loc)) continue;
+      if (p.brain) observe(p.brain, p.loc, this.idsAt(p.loc, p.id), now);
+      for (const ws of sockets.get(p.id) ?? []) this.sendView(ws, p);
+    }
+  }
+
+  /** Let every bot whose turn has come decide what to do. */
+  private botTick(now: number) {
+    for (const bot of this.state.players) {
+      if (!bot.brain || !bot.loc || !bot.role || now < bot.brain.nextMoveAt) continue;
+      const allies = bot.role === "shade"
+        ? this.state.players.filter((o) => o.role === "shade" && o.id !== bot.id).map((o) => o.id)
+        : [];
+      const choice = decide(bot.brain, bot.loc, bot.role, allies, now);
+      if (choice.to && adjacent(bot.loc, choice.to) && now >= bot.readyAt) this.moveTo(bot, choice.to, now);
+      bot.brain.nextMoveAt = now + Math.max(choice.dwellMs, MOVE_COOLDOWN_MS);
+      this.dirty = true;
+    }
+  }
+
+  private idsAt(loc: Loc, except?: string) {
+    return this.state.players.filter((o) => o.loc === loc && o.id !== except).map((o) => o.id);
+  }
+
+  private sendView(ws: WebSocket, p: Player) {
+    if (!p.loc) return;
+    this.send(ws, {
+      t: "view",
+      here: p.loc,
+      neighbors: PATHS[p.loc],
+      present: this.idsAt(p.loc, p.id),
+      readyAt: p.readyAt,
+      now: Date.now(), // lets the client correct for its own clock being off
+    });
+  }
+
   // ---------- Helpers ----------
 
   private player(id: string | null | undefined) {
@@ -380,12 +499,30 @@ export class Room extends DurableObject<Env> {
     return this.state.players.filter((p) => !p.isBot);
   }
 
+  private anyHumanHere() {
+    return this.humans().some((p) => this.isConnected(p.id));
+  }
+
+  private lastHumanSeen() {
+    return Math.max(this.state.createdAt, ...this.humans().map((p) => p.disconnectedAt ?? 0));
+  }
+
   /** Is this player connected on any open socket (optionally ignoring one that's closing)? */
   private isConnected(pid: string, ignore?: WebSocket) {
     return this.ctx.getWebSockets().some(
       (ws) => ws !== ignore && ws.readyState === WebSocket.OPEN &&
         (ws.deserializeAttachment() as SocketInfo).pid === pid,
     );
+  }
+
+  private socketsByPlayer() {
+    const map = new Map<string, WebSocket[]>();
+    for (const ws of this.ctx.getWebSockets()) {
+      const pid = (ws.deserializeAttachment() as SocketInfo).pid;
+      if (!pid) continue;
+      map.set(pid, [...(map.get(pid) ?? []), ws]);
+    }
+    return map;
   }
 
   private nextLantern(): Pick<Player, "lantern" | "shape"> {
@@ -467,25 +604,30 @@ export class Room extends DurableObject<Env> {
 
   private async save() {
     await this.ctx.storage.put("state", this.state);
+    this.dirty = false;
+    this.lastSaveAt = Date.now();
   }
 
-  /** Wake up when the next housekeeping deadline is due. */
+  /** Wake up when the next thing is due: a bot's turn, a save, or housekeeping. */
   private async scheduleAlarm() {
     const now = Date.now();
+    const s = this.state;
     const times: number[] = [];
-    if (this.state.revealEndsAt) times.push(this.state.revealEndsAt);
+    if (s.revealEndsAt) times.push(s.revealEndsAt);
+    if (s.phase === "playing" && this.anyHumanHere()) {
+      for (const p of s.players) if (p.brain) times.push(p.brain.nextMoveAt);
+    }
+    if (this.dirty) times.push(this.lastSaveAt + SAVE_EVERY);
     for (const p of this.humans()) {
       if (p.disconnectedAt && !this.isConnected(p.id)) {
         times.push(p.disconnectedAt + HOST_HANDOVER, p.disconnectedAt + LOBBY_SEAT_HOLD);
       }
     }
-    if (!this.humans().some((p) => this.isConnected(p.id))) {
-      const lastSeen = Math.max(this.state.createdAt, ...this.humans().map((p) => p.disconnectedAt ?? 0));
-      times.push(lastSeen + EMPTY_ROOM_TTL);
-    }
-    const next = times.filter((t) => t > now).sort((a, b) => a - b)[0];
-    if (next) await this.ctx.storage.setAlarm(next);
-    else if (times.length) await this.ctx.storage.setAlarm(now + 1000);
+    if (!this.anyHumanHere()) times.push(this.lastHumanSeen() + EMPTY_ROOM_TTL);
+
+    if (!times.length) return;
+    const next = Math.max(now + 50, Math.min(...times));
+    await this.ctx.storage.setAlarm(next);
   }
 }
 

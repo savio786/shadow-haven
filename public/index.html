@@ -87,12 +87,25 @@
     </header>
     <p id="peek-role" class="peek-role" hidden></p>
 
-    <section class="harbor-placeholder">
-      <p>The fog rolls in over the harbor…</p>
-      <p class="muted small">The harbor map, tasks and meetings arrive in the next updates.</p>
+    <section class="harbor">
+      <div id="map" class="map-wrap"></div>
+      <p id="move-hint" class="muted small center move-hint">Tap a glowing place to walk there.</p>
     </section>
 
-    <ul id="game-players" class="players compact"></ul>
+    <section class="here card">
+      <div class="here-head">
+        <h3 id="here-name">—</h3>
+        <span id="walking" class="walking" hidden>walking…</span>
+      </div>
+      <p id="here-text" class="muted small"></p>
+      <p class="eyebrow">Here with you</p>
+      <ul id="here-list" class="here-list"></ul>
+    </section>
+
+    <details class="roster">
+      <summary>All Keepers in this game</summary>
+      <ul id="game-players" class="players compact"></ul>
+    </details>
 
     <div id="game-host" hidden>
       <button id="end-game" class="ghost wide">Back to lobby (host)</button>

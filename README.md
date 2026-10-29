@@ -17,9 +17,12 @@ public/          static frontend (HTML, CSS, SVG art)
 src/worker.ts    entry point: /api/health, POST /api/rooms, /api/room/:code[/ws]
 src/room.ts      the Room Durable Object (one per game): lobby, players, bots
 src/shared.ts    constants and message types shared by server and client
+src/harbor.ts    the harbor's locations and paths, route finding
+src/bots.ts      bot brains: personalities, memory, decisions
 public/app.js    browser client (home + lobby)
 public/lanterns.js  original Lantern Keeper SVG art
-test/            end-to-end tests (lobby, roles)
+public/harbor.js original harbor map art
+test/            bot brain unit tests + end-to-end tests (lobby, roles, harbor)
 wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 ```
 
@@ -36,8 +39,14 @@ npm test           # end-to-end tests (needs `npm run dev` running in another te
 
 The host can add bot Keepers to fill seats, so a full game can be tested with
 one person. Bots run on the server inside the room's Durable Object, so they
-can't be seen through or cheated with from the browser. In later steps they
-move around the harbor, do tasks, play as a Shade, and talk and vote in meetings.
+can't be seen through or cheated with from the browser.
+
+Bots play fair: they only see who is in the same place as them, exactly like a
+human. Each bot has a personality (wanderer, homebody, social, watcher) and a
+memory of who it saw, where and when. Shade bots use that memory to hunt
+Keepers they last saw alone. In meetings (step 6) the same memory will feed a
+Workers AI language model so bots can argue, accuse and lie, with a rule-based
+fallback if the daily AI allowance runs out.
 
 ## Deploying
 
@@ -60,7 +69,7 @@ record pointing somewhere else.
 0. ~~Skeleton: hello page live on the custom domain, auto-deployed~~
 1. ~~Rooms and lobby: create/join by code, invite links, live player list, bots~~
 2. ~~Secret roles: fair Shade picking, private reveal, Shade partners, rejoin keeps your role~~
-3. Harbor map: move between locations
+3. ~~Harbor map: six locations, fog (you only see who's with you), smart bots that roam and hunt~~
 4. Tasks and the shared progress lantern
 5. Snuffing, cold lanterns and reporting
 6. Meetings: Harbor Bell, chat, voting, setting adrift

@@ -2,6 +2,7 @@
 // Each Keeper = a cloaked figure whose head is a lantern. Players differ by
 // flame color and lantern shape (round, hex, tall, caged).
 
+/** Flame color for each lantern id. */
 export const LANTERNS = {
   ember: "#ff7a45", amber: "#ffb347", moss: "#9bd36a", tide: "#4fc3d9", frost: "#cfe8ff",
   plum: "#b57edc", rose: "#ff8fb1", gold: "#ffd84d", ivy: "#3fbf8f", ash: "#b8b2a7",

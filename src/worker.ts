@@ -22,7 +22,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/health") {
-      return Response.json({ ok: true, game: "Shadow Haven", step: 2 });
+      return Response.json({ ok: true, game: "Shadow Haven", step: 3 });
     }
 
     if (url.pathname === "/api/rooms" && request.method === "POST") {

@@ -142,7 +142,7 @@ button.link { background: none; border: 0; color: var(--muted); text-decoration:
 .player-name { font-size: .95rem; overflow-wrap: anywhere; }
 
 .tags { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; min-height: 1.3em; }
-.tags .tag {
+.tags .tag, .here-list .tag {
   font-family: ui-sans-serif, system-ui, sans-serif;
   font-size: .68rem;
   letter-spacing: .04em;
@@ -202,16 +202,58 @@ body.is-shade .shade-svg .flame { animation-duration: 3.6s; }
 .peek-role.keeper { border-color: #ffb347; color: #ffd9a0; }
 .peek-role.shade { border-color: #9b7bff; color: #d9ccff; }
 
-.harbor-placeholder {
-  margin: 20px 0;
-  padding: 40px 16px;
-  text-align: center;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-  background:
-    radial-gradient(ellipse at 50% 120%, rgba(79,195,217,.12), transparent 60%),
-    var(--panel);
-}
+/* ---------- Harbor map ---------- */
+.harbor { margin: 16px 0 12px; }
+.map-wrap { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); line-height: 0; }
+.harbor-map { width: 100%; height: auto; display: block; }
+.harbor-map .land { fill: #1a2233; }
+.harbor-map .shore { fill: none; stroke: #2c3a55; stroke-width: 3; }
+.harbor-map .waves path { fill: none; stroke: #1f3a58; stroke-width: 1.5; stroke-linecap: round; }
+.harbor-map .path { stroke: #3a4560; stroke-width: 3; stroke-dasharray: 2 6; stroke-linecap: round; }
+.harbor-map .path.live { stroke: var(--flame); opacity: .75; }
+
+.harbor-map .place .halo { fill: transparent; }
+.harbor-map .place .disc { fill: #232c42; stroke: #3a4560; stroke-width: 1.5; }
+.harbor-map .place .icon { fill: none; stroke: #8a93a6; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.harbor-map .place .icon .cut { stroke-width: 1; opacity: .7; }
+.harbor-map .place .label { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: Georgia, serif; }
+.harbor-map .place { opacity: .55; transition: opacity .2s; }
+
+.harbor-map .place.here { opacity: 1; }
+.harbor-map .place.here .disc { fill: #2e2a22; stroke: none; }
+.harbor-map .place.here .icon { stroke: #ffe2b0; }
+.harbor-map .place.here .label { fill: var(--ink); font-weight: 600; }
+.harbor-map .place.here .ring { fill: none; stroke-width: 2.5; animation: breathe 2.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+
+.harbor-map .place.next { opacity: 1; cursor: pointer; }
+.harbor-map .place.next .halo { fill: var(--flame); opacity: .14; animation: beckon 1.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.harbor-map .place.next .disc { stroke: var(--flame); }
+.harbor-map .place.next .label { fill: var(--ink); }
+.harbor-map .place.next:hover .disc, .harbor-map .place.next:focus .disc { fill: #2b3550; }
+.harbor-map .place.next:focus { outline: none; }
+.harbor-map .place.next:focus-visible .halo { opacity: .4; }
+.harbor-map .place.next.wait { cursor: progress; }
+.harbor-map .place.next.wait .halo { animation: none; opacity: .05; }
+
+@keyframes breathe { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.12); opacity: .6; } }
+@keyframes beckon { 0%, 100% { transform: scale(.9); } 50% { transform: scale(1.1); } }
+
+.move-hint { margin: 8px 0 0; }
+
+/* ---------- Where you are ---------- */
+.here { gap: 6px; }
+.here-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.here h3 { margin: 0; font-size: 1.3rem; }
+.here h3.arrive { animation: rise .5s ease-out both; }
+.here .eyebrow { margin-top: 6px; }
+.walking { font-size: .8rem; color: var(--flame); font-style: italic; }
+.here-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.here-list li { display: flex; align-items: center; gap: 6px; }
+.here-list li.alone { color: var(--muted); font-style: italic; }
+.here-list .keeper-svg { flex: none; }
+
+.roster { margin-top: 16px; }
+.roster summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
 
 .players.compact { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
 .players.compact .player { min-height: 0; padding: 8px 6px; }
@@ -250,5 +292,6 @@ body.is-shade .shade-svg .flame { animation-duration: 3.6s; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .keeper-svg .flame, .shade-svg .smoke, .reveal h1, .reveal-text { animation: none; }
+  .keeper-svg .flame, .shade-svg .smoke, .reveal h1, .reveal-text,
+  .harbor-map .place .ring, .harbor-map .place .halo, .here h3.arrive { animation: none; }
 }
