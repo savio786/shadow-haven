@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "shadow-haven",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+
+  // Static frontend (public/) is served directly by Workers Static Assets.
+  // Requests that don't match a file fall through to the Worker (API + WebSockets).
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // One Durable Object instance per game room, addressed by room code.
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+
+  // Lives on your existing Cloudflare zone. Cloudflare creates the DNS record
+  // and certificate for this hostname on first deploy.
+  "routes": [
+    { "pattern": "game2.sedigitaltransformation.com", "custom_domain": true }
+  ],
+
+  // Keep the *.workers.dev URL too — handy for testing.
+  "workers_dev": true
+}
