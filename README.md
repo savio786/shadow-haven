@@ -19,7 +19,7 @@ src/room.ts      the Room Durable Object (one per game): lobby, players, bots
 src/shared.ts    constants and message types shared by server and client
 public/app.js    browser client (home + lobby)
 public/lanterns.js  original Lantern Keeper SVG art
-test/            end-to-end lobby tests
+test/            end-to-end tests (lobby, roles)
 wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 ```
 
@@ -29,7 +29,7 @@ wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 npm install
 npm run dev        # http://localhost:8787
 npm run check      # typecheck + dry-run build
-npm test           # lobby tests (needs `npm run dev` running in another terminal)
+npm test           # end-to-end tests (needs `npm run dev` running in another terminal)
 ```
 
 ## Bots
@@ -59,7 +59,7 @@ record pointing somewhere else.
 
 0. ~~Skeleton: hello page live on the custom domain, auto-deployed~~
 1. ~~Rooms and lobby: create/join by code, invite links, live player list, bots~~
-2. Secret role assignment and reveal
+2. ~~Secret roles: fair Shade picking, private reveal, Shade partners, rejoin keeps your role~~
 3. Harbor map: move between locations
 4. Tasks and the shared progress lantern
 5. Snuffing, cold lanterns and reporting

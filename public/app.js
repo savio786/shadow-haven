@@ -1,7 +1,8 @@
 // Shadow Haven — browser client (step 1: home + lobby).
-import { keeperSVG } from "./lanterns.js";
+import { keeperSVG, shadeSVG } from "./lanterns.js";
 
 const MIN_PLAYERS = 4;
+const REVEAL_MS = 7000;
 const $ = (id) => document.getElementById(id);
 
 // ---------- Small storage helpers (storage can be blocked; never crash) ----------
@@ -25,15 +26,18 @@ let ws = null;
 let roomCode = null;
 let me = null;
 let lobby = null;
+let myRole = null;   // "keeper" | "shade" — only ever our own
+let allies = [];     // fellow Shades' ids (only if we're a Shade)
 let retry = 0;
 let retryTimer = null;
 let pingTimer = null;
 let leaving = false;
 
 // ---------- Screens ----------
+const SCREENS = ["home", "lobby", "reveal", "game"];
 function show(screen) {
-  $("home").hidden = screen !== "home";
-  $("lobby").hidden = screen !== "lobby";
+  for (const s of SCREENS) $(s).hidden = s !== screen;
+  document.body.dataset.screen = screen;
 }
 
 function banner(text) {
@@ -164,8 +168,16 @@ function onMessage(msg) {
       me = msg.you;
       break;
     case "lobby":
+      // Back in the lobby means last game's role is gone. (Roles arrive just
+      // before the "reveal" update, so only clear when the room says lobby.)
+      if (msg.phase === "lobby" && lobby?.phase !== "lobby") { myRole = null; allies = []; }
       lobby = msg;
-      renderLobby();
+      renderPhase();
+      break;
+    case "role":
+      myRole = msg.role;
+      allies = msg.allies || [];
+      if (lobby && lobby.phase !== "lobby") renderPhase();
       break;
     case "notice":
       toast(msg.text);
@@ -187,6 +199,8 @@ function backHome(error) {
   ws = null;
   me = null;
   lobby = null;
+  myRole = null;
+  allies = [];
   roomCode = null;
   banner("");
   if (location.pathname !== "/") history.pushState({}, "", "/");
@@ -194,9 +208,109 @@ function backHome(error) {
   homeError(error || "");
 }
 
+// ---------- Phase switching ----------
+function renderPhase() {
+  if (!lobby) return;
+  if (lobby.phase === "lobby") {
+    show("lobby");
+    renderLobby();
+  } else if (lobby.phase === "reveal" && myRole) {
+    if ($("reveal").hidden) renderReveal();
+    show("reveal");
+  } else if (lobby.phase === "playing" && myRole) {
+    show("game");
+    renderGame();
+  }
+}
+
+// ---------- Role reveal ----------
+function renderReveal() {
+  const self = lobby.players.find((p) => p.id === me);
+  const shade = myRole === "shade";
+  document.body.classList.toggle("is-shade", shade);
+  $("reveal").classList.toggle("shade", shade);
+  $("reveal-keeper").innerHTML = shade
+    ? shadeSVG({ shape: self?.shape, size: 110 })
+    : keeperSVG({ lantern: self?.lantern, shape: self?.shape, size: 110 });
+  $("reveal-title").textContent = shade ? "You are a Shade" : "You are a Lantern Keeper";
+  $("reveal-text").textContent = shade
+    ? "Snuff the harbor lights one by one. Blend in, lie well, and don't get set adrift."
+    : `Keep the harbor lit and finish your tasks. ${lobby.shades === 1 ? "One Shade hides" : `${lobby.shades} Shades hide`} among you — find them.`;
+
+  $("reveal-allies").hidden = !(shade && allies.length);
+  $("allies-list").innerHTML = "";
+  for (const id of allies) {
+    const p = lobby.players.find((x) => x.id === id);
+    if (!p) continue;
+    const li = document.createElement("li");
+    li.innerHTML = keeperSVG({ lantern: p.lantern, shape: p.shape, size: 40 });
+    const n = document.createElement("span");
+    n.textContent = p.name;
+    li.append(n);
+    $("allies-list").append(li);
+  }
+
+  // Countdown bar: drain over the time left in the reveal.
+  const left = Math.max(0, Math.min(REVEAL_MS, (lobby.revealEndsAt ?? Date.now()) - Date.now()));
+  const bar = $("countdown-bar");
+  bar.style.transition = "none";
+  bar.style.width = (left / REVEAL_MS) * 100 + "%";
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    bar.style.transition = `width ${left}ms linear`;
+    bar.style.width = "0%";
+  }));
+}
+
+// ---------- In game (placeholder until the harbor map) ----------
+function renderGame() {
+  const isHost = lobby.hostId === me;
+  $("game-code").textContent = roomCode;
+  $("game-host").hidden = !isHost;
+  document.body.classList.toggle("is-shade", myRole === "shade");
+
+  $("game-players").innerHTML = "";
+  for (const p of lobby.players) {
+    const li = document.createElement("li");
+    li.className = "player" + (p.id === me ? " me" : "") + (p.connected ? "" : " away");
+    li.innerHTML = keeperSVG({ lantern: p.lantern, shape: p.shape, dim: !p.connected, size: 36 });
+    const name = document.createElement("span");
+    name.className = "player-name";
+    name.textContent = p.name + (p.id === me ? " (you)" : "");
+    li.append(name);
+    const tags = document.createElement("span");
+    tags.className = "tags";
+    if (p.isHost) tags.append(tag("Host", "host"));
+    if (p.isBot) tags.append(tag("Bot", "bot"));
+    // Only a Shade's own screen marks their partners.
+    if (allies.includes(p.id)) tags.append(tag("Shade", "shade"));
+    if (!p.connected) tags.append(tag("Away", "away"));
+    li.append(tags);
+    $("game-players").append(li);
+  }
+}
+
+let peekTimer;
+function peek() {
+  const el = $("peek-role");
+  if (!el.hidden) return hidePeek();
+  el.textContent = myRole === "shade"
+    ? "You are a Shade. Snuff the lights without being caught."
+    : "You are a Lantern Keeper. Keep the lights burning.";
+  el.className = "peek-role " + myRole;
+  el.hidden = false;
+  $("peek").setAttribute("aria-pressed", "true");
+  clearTimeout(peekTimer);
+  peekTimer = setTimeout(hidePeek, 3000);
+}
+function hidePeek() {
+  $("peek-role").hidden = true;
+  $("peek").setAttribute("aria-pressed", "false");
+}
+
 // ---------- Lobby rendering ----------
 function renderLobby() {
   if (!lobby) return;
+  document.body.classList.remove("is-shade");
   const isHost = lobby.hostId === me;
   const count = lobby.players.length;
 
@@ -242,7 +356,7 @@ function renderLobby() {
   const need = Math.max(0, MIN_PLAYERS - count);
   $("lobby-status").textContent = need
     ? `${count} of ${lobby.max} Keepers. Need ${need} more to start${isHost ? " — invite friends or add bots." : "."}`
-    : `${count} of ${lobby.max} Keepers aboard.`;
+    : `${count} of ${lobby.max} Keepers aboard. ${lobby.shades === 1 ? "One Shade" : `${lobby.shades} Shades`} will hide among you.`;
 
   $("host-controls").hidden = !isHost;
   $("waiting").hidden = isHost;
@@ -261,12 +375,22 @@ function tag(text, kind) {
 function initLobby() {
   $("add-bot").addEventListener("click", () => send({ t: "addBot" }));
   $("start").addEventListener("click", () => send({ t: "start" }));
-  $("leave").addEventListener("click", () => {
+  const leave = () => {
     leaving = true;
     send({ t: "leave" });
-    setTimeout(() => { try { ws?.close(); } catch {} }, 200);
+    const sock = ws;
+    setTimeout(() => { try { sock?.close(); } catch {} }, 200);
+    document.body.classList.remove("is-shade");
     backHome();
+  };
+  $("leave").addEventListener("click", leave);
+  $("game-leave").addEventListener("click", () => {
+    if (confirm("Leave this game? Your Keeper stays behind until you come back.")) leave();
   });
+  $("end-game").addEventListener("click", () => {
+    if (confirm("End this game for everyone and go back to the lobby?")) send({ t: "endGame" });
+  });
+  $("peek").addEventListener("click", peek);
   $("copy-link").addEventListener("click", async () => {
     const link = `${location.origin}/r/${roomCode}`;
     try {

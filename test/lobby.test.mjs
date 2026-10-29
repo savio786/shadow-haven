@@ -1,59 +1,7 @@
-// End-to-end lobby test against a running server.
+// End-to-end lobby tests against a running server.
 // Usage: BASE=http://localhost:8787 node test/lobby.test.mjs
 import assert from "node:assert/strict";
-
-const BASE = process.env.BASE ?? "http://localhost:8787";
-const WS_BASE = BASE.replace(/^http/, "ws");
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const rand = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-
-class Client {
-  constructor(code, name, id = { playerId: "p-" + rand().slice(0, 16), token: rand() + rand() }) {
-    this.code = code; this.name = name; this.id = id; this.msgs = []; this.closed = null;
-  }
-  open() {
-    return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(`${WS_BASE}/api/room/${this.code}/ws`);
-      this.ws.onmessage = (e) => { if (e.data !== "pong") this.msgs.push(JSON.parse(e.data)); };
-      this.ws.onclose = (e) => { this.closed = e.code; };
-      this.ws.onopen = () => resolve(this);
-      this.ws.onerror = () => reject(new Error("ws error"));
-    });
-  }
-  async join() {
-    await this.open();
-    this.send({ t: "join", ...this.id, name: this.name });
-    await this.waitFor((m) => m.t === "welcome" || m.t === "error");
-    return this;
-  }
-  send(m) { this.ws.send(typeof m === "string" ? m : JSON.stringify(m)); }
-  last(t) { return [...this.msgs].reverse().find((m) => m.t === t); }
-  async waitFor(pred, ms = 3000) {
-    const start = Date.now();
-    while (Date.now() - start < ms) {
-      const m = this.msgs.find(pred);
-      if (m) return m;
-      await sleep(25);
-    }
-    throw new Error(`${this.name}: timed out; got ${JSON.stringify(this.msgs.slice(-3))}`);
-  }
-  async lobbyWhere(pred) { return this.waitFor((m) => m.t === "lobby" && pred(m)); }
-  close() { try { this.ws.close(); } catch {} }
-}
-
-async function createRoom() {
-  const res = await fetch(`${BASE}/api/rooms`, { method: "POST" });
-  assert.equal(res.status, 201);
-  const { code } = await res.json();
-  assert.match(code, /^[A-HJ-NP-Z]{4}$/);
-  return code;
-}
-
-let passed = 0;
-async function test(name, fn) {
-  try { await fn(); passed++; console.log("  ✓", name); }
-  catch (e) { console.log("  ✗", name, "\n   ", e.message); process.exitCode = 1; }
-}
+import { BASE, WS_BASE, Client, createRoom, rand, sleep, test, done } from "./helpers.mjs";
 
 console.log("Shadow Haven lobby tests");
 
@@ -124,7 +72,7 @@ await test("only the host can add bots; bots fill to start; cap at 10", async ()
   await host.lobbyWhere((m) => m.players.length === 9);
 
   host.send({ t: "start" });
-  await guest.waitFor((m) => m.t === "notice");
+  await guest.waitFor((m) => m.t === "role");
   host.close(); guest.close(); late.close();
 });
 
@@ -188,5 +136,4 @@ await test("bad input is rejected", async () => {
   c.close();
 });
 
-console.log(`\n${passed} passed${process.exitCode ? ", some FAILED" : ""}`);
-process.exit(process.exitCode ?? 0);
+done("lobby");

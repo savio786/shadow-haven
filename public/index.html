@@ -62,6 +62,44 @@
     <button id="leave" class="link">Leave room</button>
   </main>
 
+  <!-- Private role reveal -->
+  <main id="reveal" class="screen reveal" hidden>
+    <p class="eyebrow center">Your secret role</p>
+    <div id="reveal-keeper" class="reveal-art" aria-hidden="true"></div>
+    <h1 id="reveal-title"></h1>
+    <p id="reveal-text" class="reveal-text"></p>
+    <div id="reveal-allies" class="allies" hidden>
+      <p class="eyebrow center">Your fellow Shade</p>
+      <ul id="allies-list" class="allies-list"></ul>
+    </div>
+    <div class="countdown" aria-hidden="true"><span id="countdown-bar"></span></div>
+    <p class="muted center small">Keep your screen to yourself.</p>
+  </main>
+
+  <!-- In game (the harbor map arrives in step 3) -->
+  <main id="game" class="screen" hidden>
+    <header class="game-head">
+      <div>
+        <p class="eyebrow">Room <span id="game-code"></span></p>
+        <h2>The harbor at night</h2>
+      </div>
+      <button id="peek" class="ghost peek" aria-pressed="false">Peek at my role</button>
+    </header>
+    <p id="peek-role" class="peek-role" hidden></p>
+
+    <section class="harbor-placeholder">
+      <p>The fog rolls in over the harbor…</p>
+      <p class="muted small">The harbor map, tasks and meetings arrive in the next updates.</p>
+    </section>
+
+    <ul id="game-players" class="players compact"></ul>
+
+    <div id="game-host" hidden>
+      <button id="end-game" class="ghost wide">Back to lobby (host)</button>
+    </div>
+    <button id="game-leave" class="link">Leave room</button>
+  </main>
+
   <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>

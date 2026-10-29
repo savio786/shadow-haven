@@ -30,7 +30,16 @@ export const BOT_NAMES = [
   "Pell", "Quill", "Sorrel", "Juniper", "Oakum",
 ];
 
-export type Phase = "lobby";
+export type Phase = "lobby" | "reveal" | "playing";
+export type Role = "keeper" | "shade";
+
+/** How long the private role reveal stays on screen before play begins. */
+export const REVEAL_MS = 7000;
+
+/** 4–6 Keepers → 1 Shade, 7–10 → 2 Shades. */
+export function shadeCount(players: number) {
+  return players >= 7 ? 2 : 1;
+}
 
 export interface PublicPlayer {
   id: string;
@@ -49,13 +58,25 @@ export type ClientMsg =
   | { t: "addBot" }
   | { t: "removePlayer"; id: string }
   | { t: "start" }
+  | { t: "endGame" }
   | { t: "leave" }
   | { t: "ping" };
 
 // Server → client
 export type ServerMsg =
   | { t: "welcome"; you: string; code: string }
-  | { t: "lobby"; phase: Phase; hostId: string | null; players: PublicPlayer[]; min: number; max: number }
+  | {
+      t: "lobby";
+      phase: Phase;
+      hostId: string | null;
+      players: PublicPlayer[];
+      min: number;
+      max: number;
+      shades: number;              // how many Shades this game has / will have
+      revealEndsAt: number | null; // epoch ms, during "reveal"
+    }
+  // Sent privately to one player. Never broadcast.
+  | { t: "role"; role: Role; allies: string[] }
   | { t: "notice"; text: string }
   | { t: "error"; code: string; text: string }
   | { t: "pong" };

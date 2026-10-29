@@ -5,8 +5,8 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./worker";
 import {
-  BOT_NAMES, LANTERNS, MAX_PLAYERS, MIN_PLAYERS, NAME_MAX, SHAPES,
-  type ClientMsg, type Phase, type PublicPlayer, type ServerMsg,
+  BOT_NAMES, LANTERNS, MAX_PLAYERS, MIN_PLAYERS, NAME_MAX, REVEAL_MS, SHAPES, shadeCount,
+  type ClientMsg, type Phase, type PublicPlayer, type Role, type ServerMsg,
 } from "./shared";
 
 interface Player {
@@ -18,6 +18,7 @@ interface Player {
   isBot: boolean;
   joinedAt: number;
   disconnectedAt: number | null; // humans only
+  role: Role | null;             // secret; only ever sent to this player
 }
 
 interface RoomState {
@@ -27,6 +28,11 @@ interface RoomState {
   phase: Phase;
   hostId: string | null;
   players: Player[];
+  revealEndsAt: number | null;
+}
+
+function emptyRoom(): RoomState {
+  return { code: "", created: false, createdAt: 0, phase: "lobby", hostId: null, players: [], revealEndsAt: null };
 }
 
 interface SocketInfo {
@@ -49,14 +55,10 @@ export class Room extends DurableObject<Env> {
     // Keep-alive pings are answered by Cloudflare without waking the room.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     ctx.blockConcurrencyWhile(async () => {
-      this.state = (await ctx.storage.get<RoomState>("state")) ?? {
-        code: "",
-        created: false,
-        createdAt: 0,
-        phase: "lobby",
-        hostId: null,
-        players: [],
-      };
+      const saved = await ctx.storage.get<RoomState>("state");
+      // Fill in any fields added since the room was saved.
+      this.state = { ...emptyRoom(), ...saved };
+      this.state.players = this.state.players.map((p) => ({ ...p, role: p.role ?? null }));
     });
   }
 
@@ -134,6 +136,7 @@ export class Room extends DurableObject<Env> {
       case "addBot": return this.onAddBot(ws, me);
       case "removePlayer": return this.onRemove(ws, me, msg.id);
       case "start": return this.onStart(ws, me);
+      case "endGame": return this.onEndGame(ws, me);
       case "leave": return this.onLeave(ws, me);
       default: return this.send(ws, { t: "error", code: "unknown", text: "Unknown message." });
     }
@@ -153,6 +156,11 @@ export class Room extends DurableObject<Env> {
     const now = Date.now();
     const s = this.state;
 
+    if (s.phase === "reveal" && s.revealEndsAt && now >= s.revealEndsAt) {
+      s.phase = "playing";
+      s.revealEndsAt = null;
+    }
+
     if (s.phase === "lobby") {
       const before = s.players.length;
       s.players = s.players.filter(
@@ -171,7 +179,7 @@ export class Room extends DurableObject<Env> {
     const lastSeen = Math.max(s.createdAt, ...this.humans().map((p) => p.disconnectedAt ?? 0));
     if (!anyoneHere && now - lastSeen >= EMPTY_ROOM_TTL) {
       await this.ctx.storage.deleteAll();
-      this.state = { code: "", created: false, createdAt: 0, phase: "lobby", hostId: null, players: [] };
+      this.state = emptyRoom();
       return;
     }
 
@@ -223,6 +231,7 @@ export class Room extends DurableObject<Env> {
         isBot: false,
         joinedAt: Date.now(),
         disconnectedAt: null,
+        role: null,
       };
       this.state.players.push(me);
     }
@@ -234,6 +243,8 @@ export class Room extends DurableObject<Env> {
     ws.serializeAttachment(info);
     await this.save();
     this.send(ws, { t: "welcome", you: me.id, code: this.state.code });
+    // A player rejoining mid-game gets their own role back (and only theirs).
+    if (me.role) this.sendRole(ws, me);
     this.broadcastLobby();
   }
 
@@ -260,6 +271,7 @@ export class Room extends DurableObject<Env> {
       isBot: true,
       joinedAt: Date.now(),
       disconnectedAt: null,
+      role: null,
     });
     await this.save();
     this.broadcastLobby();
@@ -285,11 +297,54 @@ export class Room extends DurableObject<Env> {
     if (this.state.players.length < MIN_PLAYERS) {
       return this.send(ws, { t: "error", code: "not_enough", text: `Need at least ${MIN_PLAYERS} Keepers — add bots to fill seats.` });
     }
-    // Roles and the harbor arrive in step 2.
-    this.broadcast({ t: "notice", text: "All Keepers aboard. Secret roles arrive in the next update." });
+
+    // Pick the Shades uniformly at random from everyone, bots included.
+    const order = shuffle(this.state.players.map((p) => p.id));
+    const shades = new Set(order.slice(0, shadeCount(this.state.players.length)));
+    for (const p of this.state.players) p.role = shades.has(p.id) ? "shade" : "keeper";
+
+    this.state.phase = "reveal";
+    this.state.revealEndsAt = Date.now() + REVEAL_MS;
+    await this.save();
+
+    // Each human hears only their own role.
+    for (const sock of this.ctx.getWebSockets()) {
+      const p = this.player((sock.deserializeAttachment() as SocketInfo).pid);
+      if (p) this.sendRole(sock, p);
+    }
+    this.broadcastLobby();
+    await this.scheduleAlarm();
+  }
+
+  private async onEndGame(ws: WebSocket, me: Player) {
+    if (!this.requireHost(ws, me)) return;
+    if (this.state.phase === "lobby") return;
+    this.state.phase = "lobby";
+    this.state.revealEndsAt = null;
+    for (const p of this.state.players) p.role = null;
+    await this.save();
+    this.broadcast({ t: "notice", text: "The host called everyone back to the lobby." });
+    this.broadcastLobby();
+    await this.scheduleAlarm();
   }
 
   private async onLeave(ws: WebSocket, me: Player) {
+    if (this.state.phase !== "lobby") {
+      // Mid-game the seat stays (your role is part of the game); you just disconnect.
+      me.disconnectedAt = Date.now();
+      if (this.state.hostId === me.id) {
+        const next = this.humans().find((p) => p.id !== me.id && this.isConnected(p.id, ws));
+        if (next) this.state.hostId = next.id;
+      }
+      const info = ws.deserializeAttachment() as SocketInfo;
+      info.pid = null;
+      ws.serializeAttachment(info);
+      try { ws.close(1000, "left"); } catch {}
+      await this.save();
+      this.broadcastLobby(ws);
+      await this.scheduleAlarm();
+      return;
+    }
     this.state.players = this.state.players.filter((p) => p.id !== me.id);
     if (this.state.hostId === me.id) {
       this.state.hostId = this.humans().find((p) => this.isConnected(p.id, ws))?.id ?? null;
@@ -361,13 +416,26 @@ export class Room extends DurableObject<Env> {
     return false;
   }
 
+  private sendRole(ws: WebSocket, p: Player) {
+    if (!p.role) return;
+    const allies = p.role === "shade"
+      ? this.state.players.filter((o) => o.role === "shade" && o.id !== p.id).map((o) => o.id)
+      : [];
+    this.send(ws, { t: "role", role: p.role, allies });
+  }
+
   private lobbyMsg(ignore?: WebSocket): ServerMsg {
+    const s = this.state;
     return {
       t: "lobby",
-      phase: this.state.phase,
-      hostId: this.state.hostId,
+      phase: s.phase,
+      hostId: s.hostId,
       min: MIN_PLAYERS,
       max: MAX_PLAYERS,
+      shades: s.phase === "lobby"
+        ? shadeCount(Math.max(s.players.length, MIN_PLAYERS))
+        : s.players.filter((p) => p.role === "shade").length,
+      revealEndsAt: s.revealEndsAt,
       players: this.state.players.map((p) => ({
         id: p.id,
         name: p.name,
@@ -405,6 +473,7 @@ export class Room extends DurableObject<Env> {
   private async scheduleAlarm() {
     const now = Date.now();
     const times: number[] = [];
+    if (this.state.revealEndsAt) times.push(this.state.revealEndsAt);
     for (const p of this.humans()) {
       if (p.disconnectedAt && !this.isConnected(p.id)) {
         times.push(p.disconnectedAt + HOST_HANDOVER, p.disconnectedAt + LOBBY_SEAT_HOLD);
@@ -418,6 +487,17 @@ export class Room extends DurableObject<Env> {
     if (next) await this.ctx.storage.setAlarm(next);
     else if (times.length) await this.ctx.storage.setAlarm(now + 1000);
   }
+}
+
+/** Fisher–Yates shuffle using the platform's cryptographic random source. */
+function shuffle<T>(items: T[]): T[] {
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) {
+    const r = crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32;
+    const j = Math.floor(r * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 function cleanName(raw: unknown) {
