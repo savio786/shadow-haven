@@ -14,7 +14,7 @@ Live at **https://game2.sedigitaltransformation.com**
 
 ```
 public/          static frontend (HTML, CSS, SVG art)
-src/worker.ts    entry point: /api/health, POST /api/rooms, /api/room/:code[/ws]
+src/worker.ts    entry point: /api/health, POST /api/rooms, /api/room/:code[/ws], /api/stats
 src/room.ts      the Room Durable Object (one per game): lobby, players, bots
 src/shared.ts    constants and message types shared by server and client
 src/harbor.ts    the harbor's locations and paths, route finding
@@ -23,13 +23,15 @@ src/tasks.ts     task definitions, challenges and answer checking
 src/minds.ts     how bots think in meetings: knowledge, prompts, fallback lines, votes
 src/ai.ts        Workers AI voices and the tale, with timeouts and fallback
 src/chronicle.ts end of the night: honors, the facts of the match, the tale
+src/stats.ts     the play statistics Durable Object (one anonymous line per game)
 public/app.js    browser client (home + lobby)
+public/stats.*   the Harbor Log page (/stats)
 public/lanterns.js  original Lantern Keeper SVG art
 public/harbor.js original harbor map art
 public/tasks.js  the six task mini-games
 public/lanterns.js  also: cold lanterns, wisps, the Harbor Bell, the drifting boat
 public/sound.js  synthesized sounds (Web Audio) and phone haptics, with mute
-test/            unit tests (bot brains, bot minds, chronicle) + end-to-end tests (lobby, roles, harbor, tasks, snuff, meetings, fog, end, hardening) + a soak test
+test/            unit tests (bot brains, bot minds, chronicle) + end-to-end tests (lobby, roles, harbor, tasks, snuff, meetings, fog, end, hardening, stats) + a soak test
 wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 ```
 
@@ -164,6 +166,39 @@ offers a way back into a game in progress.
   drifting fog, everyone you can see gathered around you), Fraunces and Inter
   type, and a softly drifting fog behind every screen.
 
+## Play statistics: the Harbor Log
+
+Open **/stats** (for example `https://game2.sedigitaltransformation.com/stats`)
+to see how the game is being played. It isn't linked from the game and is
+hidden from search engines. It shows:
+
+- **Headline numbers:** games played (and how many were played to the end),
+  the typical game length, how often the Shades win, and how many seats people
+  filled.
+- **Is it fair?** Keeper and Shade wins for each bot level, with a plain-words
+  verdict. A close game is the goal: the Shades should win 35–65% of the time.
+  Fewer than 5 games is too few to judge.
+- **How people do:** win rates when people play a Shade and when they play a
+  Keeper, plus solo games against bots versus games with friends.
+- **Games each day,** how the nights end, results by table size, and a few
+  numbers about each night: snuffs, meetings, fog, wrong votes, how lit the
+  harbor got, and how many bot lines the AI wrote.
+- **The latest games.**
+
+Pick 7 days, 30 days, 90 days or a year. The page refreshes every minute while
+it's open.
+
+**What's kept.** Each game leaves one anonymous line when it ends, is called
+off by the host, or is left unfinished: the result and how it ended, the bot
+level, the number of players and people, the length, snuffs, meetings, votes,
+fog, task progress and AI use. There are no names, player IDs or addresses.
+Lines older than about a year are deleted. All of it lives in one small
+SQLite-backed Durable Object (`src/stats.ts`), so there's nothing extra to set
+up and nothing to pay. Recording never holds up a game; if it ever failed, the
+game would carry on.
+
+`GET /api/stats?days=7|30|90|365` returns the same summary as JSON.
+
 ## Hardening (step 9)
 
 - **Reconnects.** The page sends a tiny heartbeat every 20s. Cloudflare answers
@@ -252,3 +287,4 @@ record pointing somewhere else.
 7. ~~End of the night: who was who, honors, AI-written tale and timeline, share, personal record, play again, welcome back~~
 8. ~~Art pass, the fog, bot cunning (with Auto), XP, ranks and daily streaks~~
 9. ~~Hardening: reconnects, abuse limits, security headers, wide-screen layouts, balance, performance and cost check, full test sweep~~
+10. ~~Play statistics: the Harbor Log at /stats~~

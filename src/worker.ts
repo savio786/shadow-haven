@@ -6,11 +6,14 @@
 //   POST /api/rooms               → create a room, returns { code }
 //   GET  /api/room/:code          → room info (exists? full? started?)
 //   GET  /api/room/:code/ws       → WebSocket into that room
+//   GET  /api/stats?days=30       → play statistics (anonymous), for the /stats page
 
 import { CODE_ALPHABET, CODE_PATTERN } from "./shared";
 import type { Room } from "./room";
+import type { Stats } from "./stats";
 
 export { Room } from "./room";
+export { Stats } from "./stats";
 
 interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -18,6 +21,8 @@ interface RateLimiter {
 
 export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
+  /** Play statistics: one anonymous line per game (optional: games run fine without it). */
+  STATS?: DurableObjectNamespace<Stats>;
   ASSETS: Fetcher;
   /** Workers AI, which gives bots their voices in meetings (optional: bots fall back without it). */
   AI?: { run(model: string, input: unknown): Promise<unknown> };
@@ -60,7 +65,16 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/health") {
-      return json({ ok: true, game: "Shadow Haven", step: 9 });
+      return json({ ok: true, game: "Shadow Haven", version: "1.1.0" });
+    }
+
+    if (url.pathname === "/api/stats" && request.method === "GET") {
+      if (!env.STATS) return json({ error: "no_stats" }, 404);
+      if (!(await allowed(env, env.CONNECT_LIMIT, request, "stats"))) return json(SLOW_DOWN, 429);
+      const asked = Number(url.searchParams.get("days"));
+      const days = [7, 30, 90, 365].includes(asked) ? asked : 30;
+      const stub = env.STATS.get(env.STATS.idFromName("global"));
+      return json(await stub.summary(days));
     }
 
     if (url.pathname === "/api/rooms" && request.method === "POST") {

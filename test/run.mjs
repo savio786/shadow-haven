@@ -12,4 +12,5 @@ await import("./meeting.test.mjs");
 await import("./fog.test.mjs");
 await import("./end.test.mjs");
 await import("./hardening.test.mjs");
+await import("./stats.test.mjs");
 process.exit(process.exitCode ?? 0);

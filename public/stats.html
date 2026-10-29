@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Harbor Log · Shadow Haven</title>
+  <meta name="description" content="Play statistics for Shadow Haven." />
+  <meta name="robots" content="noindex" />
+  <meta name="theme-color" content="#0e1220" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/stats.css" />
+  <script type="module" src="/stats.js"></script>
+</head>
+<body class="stats-page">
+  <main class="log">
+    <header class="log-head">
+      <div>
+        <p class="eyebrow"><a href="/" class="home-link">Shadow Haven</a> · play statistics</p>
+        <h1>The Harbor Log</h1>
+        <p class="muted small" id="updated">Reading the log…</p>
+      </div>
+      <div class="range" role="radiogroup" aria-label="Time range">
+        <button role="radio" aria-checked="false" data-days="7">7 days</button>
+        <button role="radio" aria-checked="true" data-days="30">30 days</button>
+        <button role="radio" aria-checked="false" data-days="90">90 days</button>
+        <button role="radio" aria-checked="false" data-days="365">Year</button>
+      </div>
+    </header>
+
+    <p id="error" class="log-error" role="alert" hidden></p>
+
+    <section id="empty" class="log-card empty" hidden>
+      <h2>No games in the log yet</h2>
+      <p class="muted">Play a game to the end and it will appear here a moment later. Only how the game went is kept — never names.</p>
+      <a class="primary-link" href="/">Start a game</a>
+    </section>
+
+    <div id="content" hidden>
+      <section class="tiles" aria-label="Headline numbers">
+        <div class="tile"><p class="tile-label">Games played</p><p class="tile-value" id="t-finished">–</p><p class="tile-note" id="t-finished-note"></p></div>
+        <div class="tile"><p class="tile-label">Typical game</p><p class="tile-value" id="t-length">–</p><p class="tile-note" id="t-length-note"></p></div>
+        <div class="tile"><p class="tile-label">Shades win</p><p class="tile-value" id="t-shades">–</p><p class="tile-note" id="t-shades-note"></p></div>
+        <div class="tile"><p class="tile-label">Seats filled by people</p><p class="tile-value" id="t-people">–</p><p class="tile-note" id="t-people-note"></p></div>
+      </section>
+
+      <section class="log-card">
+        <div class="card-head">
+          <h2>Is it fair?</h2>
+          <p class="legend" aria-hidden="true"><span class="key keepers"></span>Keepers win <span class="key shades"></span>Shades win</p>
+        </div>
+        <p class="muted small">A good night is a close one. Aim for the Shades winning somewhere between 35% and 65% of games.</p>
+        <div id="balance" class="bars"></div>
+      </section>
+
+      <section class="log-card">
+        <h2>How people do</h2>
+        <div class="duo">
+          <div><p class="tile-label">Playing a Shade</p><p class="duo-value" id="p-shade">–</p><p class="tile-note" id="p-shade-note"></p></div>
+          <div><p class="tile-label">Playing a Keeper</p><p class="duo-value" id="p-keeper">–</p><p class="tile-note" id="p-keeper-note"></p></div>
+          <div><p class="tile-label">Games with friends</p><p class="duo-value" id="p-friends">–</p><p class="tile-note" id="p-friends-note"></p></div>
+        </div>
+      </section>
+
+      <section class="log-card">
+        <div class="card-head">
+          <h2>Games each day</h2>
+          <p class="muted small" id="day-note"></p>
+        </div>
+        <div id="days" class="days" role="img"></div>
+        <div class="days-axis"><span id="day-first"></span><span id="day-last"></span></div>
+      </section>
+
+      <div class="pair">
+        <section class="log-card">
+          <h2>How the nights end</h2>
+          <div id="endings" class="bars"></div>
+        </section>
+        <section class="log-card">
+          <h2>Around the table</h2>
+          <div id="sizes" class="bars"></div>
+        </section>
+      </div>
+
+      <section class="log-card">
+        <h2>In the thick of it</h2>
+        <ul id="facts" class="facts"></ul>
+      </section>
+
+      <section class="log-card">
+        <h2>Latest games</h2>
+        <div class="table-wrap">
+          <table class="recent">
+            <thead><tr><th scope="col">When</th><th scope="col">Result</th><th scope="col">Bots</th><th scope="col" class="num">Players</th><th scope="col" class="num">Minutes</th><th scope="col" class="num">Snuffs</th><th scope="col" class="num">Meetings</th></tr></thead>
+            <tbody id="recent"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <p class="muted small center privacy">Only how each game went is kept, for about a year: no names, no addresses.</p>
+    </div>
+  </main>
+  <div id="tip" class="tip" role="tooltip" hidden></div>
+</body>
+</html>

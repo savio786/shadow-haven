@@ -23,6 +23,7 @@ import { TASKS, assignTasks, checkAnswer, makeChallenge, type Attempt, type Task
 import { chooseVote, mentions, tally, type MindContext } from "./minds";
 import { AiGate, DEFAULT_MODEL, speak, write } from "./ai";
 import { cleanTale, computeHonors, fallbackTale, taleFacts, talePrompt } from "./chronicle";
+import type { GameRecord, Outcome, Why } from "./stats";
 
 interface Player {
   id: string;
@@ -79,6 +80,8 @@ interface RoomState {
   settings: Settings;
   fogUntil: number | null;       // the Shades' fog is down until then
   fogReadyAt: number;            // the Shades can call the fog again from then
+  aiLines: number;               // this game's bot lines by the AI…
+  fallbackLines: number;         // …and by the built-in fallback (for the play statistics)
 }
 
 const LEVELS: BotLevel[] = ["easy", "normal", "cunning"];
@@ -96,6 +99,7 @@ function emptyRoom(): RoomState {
     revealEndsAt: null, result: null, cold: [], meeting: null, revealed: [], votes: {}, chatSeq: 0,
     log: [], gameNo: 0, startedAt: 0,
     settings: { botLevel: "normal", auto: false }, fogUntil: null, fogReadyAt: 0,
+    aiLines: 0, fallbackLines: 0,
   };
 }
 
@@ -342,6 +346,7 @@ export class Room extends DurableObject<Env> {
     }
 
     if (!this.anyHumanHere() && now - this.lastHumanSeen() >= EMPTY_ROOM_TTL) {
+      if (s.phase === "playing" || s.phase === "meeting") this.recordGame("abandoned", "empty");
       await this.ctx.storage.deleteAll();
       this.state = emptyRoom();
       this.dirty = false;
@@ -518,6 +523,8 @@ export class Room extends DurableObject<Env> {
       if (p.isBot) p.brain = newBrain(playFrom);
     }
     this.state.log = [];
+    this.state.aiLines = 0;
+    this.state.fallbackLines = 0;
     this.state.gameNo += 1;
     this.state.startedAt = playFrom;
     this.state.fogUntil = null;
@@ -551,6 +558,7 @@ export class Room extends DurableObject<Env> {
     if (!this.requireHost(ws, me)) return;
     if (this.state.phase === "lobby") return;
     const wasPlaying = this.state.phase !== "ended";
+    if (this.state.phase === "playing" || this.state.phase === "meeting") this.recordGame("ended", "host");
     this.resetToLobby();
     await this.save();
     this.broadcast({ t: "notice", text: wasPlaying ? "The host called everyone back to the lobby." : "Back in the lobby. Ready for another night?" });
@@ -998,6 +1006,8 @@ export class Room extends DurableObject<Env> {
     if (ai) this.meter.ai++;
     speak(ai, model, ctx, this.aiGate).then(async (voice) => {
       if (voice.source === "fallback") this.meter.aiFallback++;
+      if (voice.source === "ai") this.state.aiLines++;
+      else this.state.fallbackLines++;
       const live = this.state.meeting;
       if (!live || live !== m || (live.stage !== "discuss" && live.stage !== "vote") || !bot.alive) return;
       if (voice.suspect) this.hunches.set(bot.id, voice.suspect);
@@ -1232,25 +1242,68 @@ export class Room extends DurableObject<Env> {
   private checkWin() {
     if (this.state.phase !== "playing") return false;
     if (this.progress() >= 1) {
-      this.finish({ winner: "keepers", reason: "Every lantern in the harbor is burning. The Shades have nowhere left to hide." });
+      this.finish({ winner: "keepers", reason: "Every lantern in the harbor is burning. The Shades have nowhere left to hide." }, "tasks");
       return true;
     }
     const living = this.state.players.filter((p) => p.alive);
     const shades = living.filter((p) => p.role === "shade").length;
     const keepers = living.length - shades;
     if (shades === 0) {
-      this.finish({ winner: "keepers", reason: "Every Shade has been set adrift. The harbor lights burn safe tonight." });
+      this.finish({ winner: "keepers", reason: "Every Shade has been set adrift. The harbor lights burn safe tonight." }, "adrift");
       return true;
     }
     if (shades >= keepers) {
-      this.finish({ winner: "shades", reason: "The Shades now match the Keepers lantern for lantern. The harbor goes dark." });
+      this.finish({ winner: "shades", reason: "The Shades now match the Keepers lantern for lantern. The harbor goes dark." }, "dark");
       return true;
     }
     return false;
   }
 
-  private finish(r: { winner: GameResult["winner"]; reason: string }) {
+  /**
+   * Send one anonymous line about this game to the play statistics. Never
+   * waits on it and never lets it get in the way of the game.
+   */
+  private recordGame(outcome: Outcome, why: Why) {
     const s = this.state;
+    if (!this.env.STATS || !s.startedAt) return;
+    const dealt = s.players.filter((p) => p.role);
+    const keepers = dealt.filter((p) => p.role === "keeper");
+    const total = keepers.reduce((t, p) => t + p.tasks.length, 0);
+    const done = keepers.reduce((t, p) => t + p.tasks.filter((x) => x.done).length, 0);
+    const count = (kind: string, test: (e: (typeof s.log)[number]) => boolean = () => true) =>
+      s.log.filter((e) => e.kind === kind && test(e)).length;
+    const record: GameRecord = {
+      id: `${s.code}-${s.gameNo}-${s.startedAt}`,
+      at: Date.now(),
+      outcome,
+      why,
+      level: s.settings.botLevel,
+      auto: s.settings.auto,
+      players: dealt.length,
+      humans: dealt.filter((p) => !p.isBot).length,
+      bots: dealt.filter((p) => p.isBot).length,
+      shades: dealt.filter((p) => p.role === "shade").length,
+      humanShades: dealt.filter((p) => p.role === "shade" && !p.isBot).length,
+      // An abandoned game lasted until the last person left, not until the room was tidied away.
+      durationMs: Math.max(0, (outcome === "abandoned" ? this.lastHumanSeen() : Date.now()) - s.startedAt),
+      meetings: count("report") + count("bell"),
+      bells: count("bell"),
+      snuffs: count("snuff"),
+      shadesAdrift: count("adrift", (e) => e.wasShade === true),
+      keepersAdrift: count("adrift", (e) => e.wasShade === false),
+      fogs: count("fog"),
+      relights: count("relight"),
+      progress: total ? done / total : 0,
+      aiLines: s.aiLines ?? 0,
+      fallbackLines: s.fallbackLines ?? 0,
+    };
+    const stub = this.env.STATS.get(this.env.STATS.idFromName("global"));
+    this.ctx.waitUntil(stub.record(record).catch((e) => console.log("stats not recorded:", String(e))));
+  }
+
+  private finish(r: { winner: GameResult["winner"]; reason: string }, why: Why) {
+    const s = this.state;
+    this.recordGame(r.winner, why);
     s.phase = "ended";
     s.meeting = null;
     for (const p of s.players) {

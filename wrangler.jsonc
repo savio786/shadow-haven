@@ -27,9 +27,16 @@
 
   // One Durable Object instance per game room, addressed by room code.
   "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+    "bindings": [
+      { "name": "ROOMS", "class_name": "Room" },
+      // A single instance keeps the play statistics (one anonymous line per game).
+      { "name": "STATS", "class_name": "Stats" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Room"] },
+    { "tag": "v2", "new_sqlite_classes": ["Stats"] }
+  ],
 
   // Lives on your existing Cloudflare zone. Cloudflare creates the DNS record
   // and certificate for this hostname on first deploy.

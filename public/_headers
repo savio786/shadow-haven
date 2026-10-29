@@ -11,6 +11,10 @@
 /index.html
   Cache-Control: no-cache
 
+/stats
+  Cache-Control: no-cache
+  X-Robots-Tag: noindex
+
 /*.js
   Cache-Control: public, max-age=300, must-revalidate
 
