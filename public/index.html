@@ -7,6 +7,9 @@
   <meta name="description" content="Keep the harbor lights burning. One of you is a Shade." />
   <meta name="theme-color" content="#0e1220" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" />
   <link rel="stylesheet" href="/style.css" />
   <script type="module" src="/app.js"></script>
 </head>
@@ -24,6 +27,10 @@
 
     <section id="welcome" class="welcome" hidden>
       <p id="welcome-hi" class="welcome-hi"></p>
+      <div id="welcome-rank" class="welcome-rank" hidden>
+        <span id="welcome-rank-name"></span>
+        <div class="xp-bar small" aria-hidden="true"><span id="welcome-rank-fill"></span></div>
+      </div>
       <ul id="welcome-record" class="over-meta"></ul>
       <button id="welcome-return" class="primary wide" hidden></button>
     </section>
@@ -60,6 +67,17 @@
 
     <ul id="players" class="players" aria-live="polite"></ul>
 
+    <div id="level-box" class="level-box">
+      <p class="eyebrow">How sharp are the bots?</p>
+      <div id="bot-level" class="segmented" role="radiogroup" aria-label="Bot cunning">
+        <button role="radio" data-level="easy" aria-checked="false">Easy</button>
+        <button role="radio" data-level="normal" aria-checked="true">Normal</button>
+        <button role="radio" data-level="cunning" aria-checked="false">Cunning</button>
+        <button role="radio" data-level="auto" aria-checked="false">Auto</button>
+      </div>
+      <p id="level-note" class="muted small"></p>
+    </div>
+
     <div id="host-controls" class="host-controls" hidden>
       <button id="add-bot" class="ghost">+ Add a bot Keeper</button>
       <button id="start" class="primary">Start</button>
@@ -95,6 +113,10 @@
     </header>
     <p id="peek-role" class="peek-role" hidden></p>
     <p id="goal" class="goal"></p>
+    <div id="fog-banner" class="fog-banner" role="status" hidden>
+      <span id="fog-text"></span>
+      <span id="fog-secs" class="fog-secs"></span>
+    </div>
     <div id="wisp-banner" class="wisp-banner" hidden>
       <div id="wisp-art"></div>
       <p><strong>You are a wisp.</strong> The living can't see or hear you. Keep doing your tasks — they still light the harbor.</p>
@@ -196,6 +218,15 @@
       <h1 id="over-title"></h1>
       <p id="over-reason" class="over-reason"></p>
       <p id="over-you" class="over-you"></p>
+      <div id="xp" class="xp" hidden>
+        <div class="xp-top">
+          <span id="xp-rank" class="xp-rank"></span>
+          <span id="xp-gain" class="xp-gain"></span>
+        </div>
+        <div class="xp-bar" aria-hidden="true"><span id="xp-fill"></span></div>
+        <p id="xp-next" class="xp-next"></p>
+        <ul id="xp-why" class="xp-why"></ul>
+      </div>
       <ul id="over-meta" class="over-meta" aria-label="This game and your record"></ul>
     </section>
 
@@ -268,6 +299,8 @@
           <div><strong>The harbor is foggy.</strong> You only see who is in the same place as you. Remember who you saw, and where.</div></li>
         <li><span class="howto-art" data-art="cold"></span>
           <div><strong>Find a cold lantern? Report it.</strong> That rings the Harbor Bell and everyone gathers. Share what you saw — and work out who the Shade is.</div></li>
+        <li><span class="howto-art" data-art="fogcall"></span>
+          <div><strong>Beware the fog.</strong> Shades can hide every face for a while. Anyone can lift it by relighting the great lamp at the Lighthouse.</div></li>
         <li><span class="howto-art" data-art="lamp"></span>
           <div><strong>Proof you can trust:</strong> only a real Keeper can light the great lamp at the Lighthouse. If you watch someone do it, they're a Keeper.</div></li>
       </ol>

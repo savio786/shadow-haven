@@ -51,6 +51,10 @@ export function computeHonors({ players, log, lamps, winner }: HonorInput): Hono
     }
   }
 
+  // Broke the Shades' fog.
+  const breaker = log.find((e) => e.kind === "relight" && e.who && !given.has(e.who));
+  if (breaker?.who) add({ id: "lamp", title: "Fog breaker", who: breaker.who, why: "relit the great lamp and lifted the fog" });
+
   // Proved themselves at the great lamp.
   const lamp = lamps.find((id) => !given.has(id)) ?? lamps[0];
   if (lamp) add({ id: "lamp", title: "Lamplighter", who: lamp, why: "lit the great lamp for all to see" });
@@ -78,6 +82,8 @@ export function taleFacts(input: { players: PlayerSummary[]; names: Record<strin
     if (e.kind === "bell") facts.push(`${n(e.who)} rang the emergency bell in the square.`);
     if (e.kind === "adrift") facts.push(`The town voted to set ${n(e.who)} adrift. ${n(e.who)} was ${e.wasShade ? "a Shade" : "an innocent Keeper"}.`);
     if (e.kind === "spared") facts.push(`The town could not agree, and nobody was set adrift.`);
+    if (e.kind === "fog") facts.push(`${n(e.who)} secretly called a cold fog over the harbor, hiding every face.`);
+    if (e.kind === "relight") facts.push(`${n(e.who)} relit the great lamp at the Lighthouse and the fog lifted.`);
   }
   facts.push(input.winner === "keepers" ? `In the end the Keepers won. ${input.reason}` : `In the end the Shades won. ${input.reason}`);
   return facts;
@@ -107,6 +113,8 @@ export function fallbackTale(input: { players: PlayerSummary[]; names: Record<st
       ? `The town set ${n(e.who)} adrift — and the fog thinned, for ${n(e.who)} was a Shade.`
       : `The town set ${n(e.who)} adrift, but ${n(e.who)} was only a Keeper, and the shadows smiled.`);
     if (e.kind === "spared") parts.push("Nobody could agree, and the boats stayed tied.");
+    if (e.kind === "fog") parts.push("Then a cold fog rolled in, and every face became a shape.");
+    if (e.kind === "relight") parts.push(`${n(e.who)} climbed the Lighthouse and relit the great lamp; the fog fled.`);
   }
   parts.push(input.winner === "keepers"
     ? `By dawn every lantern that mattered was burning, and ${shades.join(" and ")} had nowhere left to hide.`

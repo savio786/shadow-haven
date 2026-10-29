@@ -144,6 +144,24 @@ When a side wins, everyone gets an end screen with:
 The home screen welcomes returning players by name, shows their record, and
 offers a way back into a game in progress.
 
+## Fog, cunning and ranks
+
+- **The fog.** A Shade can call a cold fog (not in the first 30s of play or
+  after a meeting; then it rests 60s). For up to 30s, living Keepers see only
+  *shapes* — no names, and a snuff in the fog doesn't show who did it. Anyone
+  alive can lift it by relighting the great lamp at the Lighthouse (a Shade
+  doing so looks very innocent). The bell cuts through the fog.
+- **Bot cunning.** The host picks Easy, Normal or Cunning. Cunning Shade bots
+  strike faster, call the fog and frame Keepers with confident AI-written
+  lies; cunning Keeper bots rush to relight the lamp and catch contradictions.
+  **Auto** picks the level from the host's record so games stay close.
+- **XP and ranks.** Each game earns XP (playing, winning, tasks, sharp votes,
+  snuffs, honors) toward six ranks, Deckhand to Lighthouse Legend, with a
+  rank-up moment; the home screen shows your rank and a daily streak.
+- **Art.** An illustrated harbor (buildings with lit windows, moon, waves,
+  drifting fog, everyone you can see gathered around you), Fraunces and Inter
+  type, and a softly drifting fog behind every screen.
+
 ## Deploying
 
 Pushing to `main` deploys automatically. The workflow needs two repository secrets
@@ -170,5 +188,5 @@ record pointing somewhere else.
 5. ~~Snuffing, wisps, cold lanterns, the Harbor Bell, Shades' win, bot evidence, How to play~~
 6. ~~Meetings: emergency bell, chat with smart quick lines, voting, verdict, AI-voiced bots that answer and vote on evidence, sound~~
 7. ~~End of the night: who was who, honors, AI-written tale and timeline, share, personal record, play again, welcome back~~
-8. Art pass
+8. ~~Art pass, the fog, bot cunning (with Auto), XP, ranks and daily streaks~~
 9. Reconnects, host handover, rate limits, tests

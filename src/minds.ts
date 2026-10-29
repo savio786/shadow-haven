@@ -7,7 +7,7 @@
 
 import type { Brain, Personality } from "./bots";
 import type { Loc } from "./harbor";
-import type { ChatLine, Role } from "./shared";
+import type { BotLevel, ChatLine, Role } from "./shared";
 
 export const PLACE_NAMES: Record<Loc, string> = {
   dock: "the Dock", lighthouse: "the Lighthouse", netloft: "the Net Loft",
@@ -31,7 +31,20 @@ export interface MindContext {
   chat: ChatLine[];
   replyTo?: ChatLine;               // a line that mentioned this bot
   now: number;
+  level?: BotLevel;                 // how cunning the room's bots are
 }
+
+const CUNNING: Record<BotLevel, { keeper: string; shade: string }> = {
+  easy: {
+    keeper: "You are not very observant and easily persuaded by others.",
+    shade: "You are a clumsy liar: vague, and a little nervous.",
+  },
+  normal: { keeper: "", shade: "" },
+  cunning: {
+    keeper: "Reason sharply: compare what people claim with what you saw, and call out contradictions by name.",
+    shade: "Be cunning: give a specific, believable alibi naming a place, stay calm, and quietly cast doubt on one particular Keeper.",
+  },
+};
 
 // ---------- What the bot knows, in plain words ----------
 
@@ -77,10 +90,11 @@ export function buildPrompt(ctx: MindContext): { system: string; user: string } 
     ? `${n(meeting.reporter)} rang the bell after finding ${meeting.found.map(n).join(" and ")}'s lantern cold at ${PLACE_NAMES[meeting.loc]}.`
     : `${n(meeting.reporter)} rang the emergency bell in the square without a cold lantern.`;
 
+  const style = CUNNING[ctx.level ?? "normal"][self.role === "shade" ? "shade" : "keeper"];
   const system =
     `You are ${self.name}, a character in "Shadow Haven", a social deduction game set in a foggy harbor town at night. ` +
     `Lantern Keepers tend the harbor lights; hidden Shades snuff Keepers' lanterns. The town has gathered at the Harbor Bell ` +
-    `to talk and then vote someone adrift. Your manner: ${VOICE[self.personality]}. ${secret} ` +
+    `to talk and then vote someone adrift. Your manner: ${VOICE[self.personality]}. ${secret} ${style} ` +
     `Speak as a person in the town, never as an AI. Use at most 22 words, plain everyday language, no emojis, no quotation marks. ` +
     `Only name people who are still in the game: ${living.join(", ") || "nobody"}. ` +
     `Reply ONLY with JSON: {"say": "<your line>", "suspect": "<one name from that list, or nobody>"}.`;
@@ -214,6 +228,9 @@ export function mentions(text: string, name: string) {
  * or onto whoever accused them.
  */
 export function chooseVote(ctx: MindContext, hunch: string | null): string {
+  const level = ctx.level ?? "normal";
+  const keeperBar = { easy: 60, normal: 20, cunning: 14 }[level];
+  const crowd = { easy: 4, normal: 7, cunning: 9 }[level];
   const { self, brain, allies } = ctx;
   const candidates = ctx.living.filter((id) => id !== self.id);
   const { accused, cleared } = readChat(ctx.chat, ctx.names);
@@ -227,11 +244,11 @@ export function chooseVote(ctx: MindContext, hunch: string | null): string {
       if (e.kind === "nearCold") add(e.who, 6);
     }
     for (const id of brain.vouched) add(id, -100);
-    for (const [id, by] of accused) add(id, 7 * [...by].filter((w) => w !== id).length);
+    for (const [id, by] of accused) add(id, crowd * [...by].filter((w) => w !== id).length);
     for (const [id, by] of cleared) add(id, -6 * by.size);
     if (hunch) add(hunch, 18);
     const best = [...score].sort((a, b) => b[1] - a[1])[0];
-    return best && best[1] >= 20 ? best[0] : "skip";
+    return best && best[1] >= keeperBar ? best[0] : "skip";
   }
 
   // Shade.
@@ -241,7 +258,7 @@ export function chooseVote(ctx: MindContext, hunch: string | null): string {
   if (hunch) add(hunch, 12);
   for (const id of brain.vouched) add(id, -15); // hard to push a proven Keeper out
   const best = [...score].sort((a, b) => b[1] - a[1])[0];
-  return best && best[1] >= 10 ? best[0] : "skip";
+  return best && best[1] >= (level === "cunning" ? 6 : level === "easy" ? 20 : 10) ? best[0] : "skip";
 }
 
 /** Count the votes. Most votes wins, if it beats skipping and isn't a tie. */

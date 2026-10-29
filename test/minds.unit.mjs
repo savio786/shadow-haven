@@ -161,4 +161,21 @@ await test("speak: AI first, fallback when the model fails, and a pause after fa
   assert.equal(v3.source, "fallback", "works with no AI at all");
 });
 
+await test("bot cunning changes how bots talk and vote", async () => {
+  const shadeCunning = M.buildPrompt({ ...ctx({ role: "shade" }), level: "cunning" });
+  assert.match(shadeCunning.system, /believable alibi/);
+  const keeperEasy = M.buildPrompt({ ...ctx(), level: "easy" });
+  assert.match(keeperEasy.system, /not very observant/);
+  // A hint of suspicion: Normal and Cunning Keepers act on it, Easy ones skip.
+  const near = (level) => ({ ...ctx({ setup: (b) => remember(b, { kind: "nearCold", who: "f", victim: "x", loc: "chapel", at: 1 }) }), level });
+  assert.equal(M.chooseVote(near("easy"), null), "skip");
+  assert.equal(M.chooseVote(near("normal"), null), "f");
+  assert.equal(M.chooseVote(near("cunning"), null), "f");
+  // Hard evidence wins at every level.
+  for (const level of ["easy", "normal", "cunning"]) {
+    const saw = { ...ctx({ setup: (b) => remember(b, { kind: "sawSnuff", who: "w", victim: "x", loc: "dock", at: 1 }) }), level };
+    assert.equal(M.chooseVote(saw, null), "w");
+  }
+});
+
 done("minds");

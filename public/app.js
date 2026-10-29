@@ -1,7 +1,7 @@
 // Shadow Haven — browser client.
 import { keeperSVG, shadeSVG, coldLanternSVG, wispSVG, bellSVG, boatSVG, endSceneSVG, honorIcon, LANTERNS } from "./lanterns.js";
 import { sfx, buzz, isMuted, setMuted } from "./sound.js";
-import { harborSVG, PLACES } from "./harbor.js";
+import { harborSVG, crowdSVG, PLACES } from "./harbor.js";
 import { runTask } from "./tasks.js";
 
 const MIN_PLAYERS = 4;
@@ -36,6 +36,7 @@ let readyTimer = null;
 let myTasks = [];    // our task list (a Shade's is fake)
 let activeTask = null; // { id, nonce, cleanup } while a mini-game is open
 let snuffTimer = null;  // ticks the Shade's countdown on the snuff button
+let fogTimer = null;    // ticks the fog banner
 let clockOffset = 0;    // server clock minus ours
 const serverNow = () => Date.now() + clockOffset;
 // What you've experienced this game — used for smart quick lines in meetings.
@@ -86,6 +87,7 @@ function initHowTo() {
     shade: () => shadeSVG({ shape: "round", size: 34 }),
     fog: () => `<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><path d="M4 16h22M10 22h26M2 28h20" stroke="#9fb4d6" stroke-width="3" stroke-linecap="round" opacity=".7"/></svg>`,
     cold: () => coldLanternSVG({ shape: "hex", size: 46 }),
+    fogcall: () => `<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><ellipse cx="20" cy="22" rx="16" ry="8" fill="#9fb4d6" opacity=".35"/><ellipse cx="14" cy="17" rx="3" ry="6" fill="#0c0f18"/><ellipse cx="26" cy="18" rx="3" ry="6" fill="#0c0f18"/><path d="M4 28h30M8 33h24" stroke="#b7c6dd" stroke-width="2.5" stroke-linecap="round" opacity=".6"/></svg>`,
     lamp: () => `<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><path d="M15 36h10l-2-18h-6z" fill="#8a93a6"/><rect x="14" y="12" width="12" height="6" rx="1" fill="#ffb347"/><path d="M26 15l12-6M26 15l12 6" stroke="#ffd59a" stroke-width="2" stroke-linecap="round"/></svg>`,
   };
   const open = () => {
@@ -276,6 +278,7 @@ function onMessage(msg) {
       view = {
         here: msg.here, neighbors: msg.neighbors, present: msg.present, wisps: msg.wisps ?? [],
         cold: msg.cold ?? [], alive: msg.alive !== false,
+        fog: !!msg.fog, shapes: msg.shapes ?? 0, fogReadyAt: msg.fogReadyAt ?? null,
         readyAtLocal: Date.now() + wait,
         snuffReadyAtLocal: msg.snuffReadyAt == null ? null : Date.now() + Math.max(0, msg.snuffReadyAt - msg.now),
       };
@@ -312,6 +315,7 @@ function backHome(error) {
   view = null;
   myTasks = [];
   closeTask();
+  stopGameTimers();
   roomCode = null;
   banner("");
   if (location.pathname !== "/") history.pushState({}, "", "/");
@@ -331,13 +335,21 @@ async function renderWelcome() {
   if (!name) return;
   const hour = new Date().getHours();
   const greet = hour < 5 ? "Still up" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  $("welcome-hi").textContent = rec.games
-    ? `${greet}, ${name}. The harbor remembers you.`
-    : `${greet}, ${name}. Ready for your first night?`;
+  const playedToday = rec.lastDay === today();
+  const keepStreak = rec.days > 1 && !playedToday && rec.lastDay === today(new Date(Date.now() - 86400000));
+  $("welcome-hi").textContent = !rec.games
+    ? `${greet}, ${name}. Ready for your first night?`
+    : keepStreak
+      ? `${greet}, ${name}. Play tonight to keep your ${rec.days}-day streak alive.`
+      : `${greet}, ${name}. The harbor remembers you.`;
+  const rank = rankFor(rec.xp);
+  $("welcome-rank").hidden = !rec.games;
+  $("welcome-rank-name").textContent = `${rank.name} · ${rec.xp} XP` + (rank.next ? ` · ${rank.toNext} to ${rank.next}` : "");
+  $("welcome-rank-fill").style.width = `${rank.progress * 100}%`;
   const meta = $("welcome-record");
   meta.innerHTML = "";
   if (rec.games) {
-    for (const [label, value] of [["games", rec.games], ["wins", rec.wins], ["best streak", rec.best]]) {
+    for (const [label, value] of [["games", rec.games], ["wins", rec.wins], [rec.days > 1 ? "days in a row" : "best streak", rec.days > 1 ? rec.days : rec.best]]) {
       const li = document.createElement("li");
       li.innerHTML = `<span class="meta-value"></span><span class="meta-label"></span>`;
       li.firstChild.textContent = value;
@@ -372,9 +384,11 @@ function renderPhase() {
     show("game");
     renderGame();
   } else if (lobby.phase === "meeting" && lobby.meeting) {
+    stopGameTimers();
     show("meeting");
     renderMeeting();
   } else if (lobby.phase === "ended" && lobby.result) {
+    stopGameTimers();
     const firstTime = $("over").hidden;
     show("over");
     renderOver(firstTime);
@@ -430,10 +444,19 @@ function renderHarbor() {
   // Only rebuild the map when it actually looks different, so a tap is never
   // lost to a redraw caused by someone else walking past.
   const todo = myTasks.filter((t) => !t.done).map((t) => t.loc);
-  const mapKey = [view.here, view.neighbors.join(), canMove, flame, todo.join()].join("|");
+  const mapKey = [view.here, view.neighbors.join(), canMove, flame, todo.join(), view.fog].join("|");
   if ($("map").dataset.key !== mapKey) {
-    $("map").innerHTML = harborSVG({ here: view.here, neighbors: view.neighbors, canMove, flame, tasks: todo });
+    $("map").innerHTML = harborSVG({ here: view.here, neighbors: view.neighbors, canMove, flame, tasks: todo, fog: view.fog });
     $("map").dataset.key = mapKey;
+  }
+  // The lanterns around you update on their own layer, so a tap is never lost to a redraw.
+  const crowd = $("map").querySelector(".crowd-layer");
+  if (crowd) {
+    crowd.innerHTML = crowdSVG({
+      here: view.here, flame, fog: view.fog, shapes: view.shapes,
+      company: view.present.map((id) => ({ lantern: playerOf(id)?.lantern, wisp: view.wisps.includes(id) })),
+      self: { lantern: self?.lantern, wisp: !view.alive },
+    });
   }
   $("walking").hidden = canMove;
   $("move-hint").textContent = canMove
@@ -455,7 +478,14 @@ function renderHarbor() {
   const list = $("here-list");
   list.innerHTML = "";
   const company = view.present.map((id) => lobby.players.find((p) => p.id === id)).filter(Boolean);
-  if (!company.length) {
+  if (view.fog) {
+    const li = document.createElement("li");
+    li.className = "alone shapes";
+    li.textContent = view.shapes
+      ? `${view.shapes} ${view.shapes === 1 ? "shape" : "shapes"} in the fog. You can't make out who.`
+      : "Nobody — as far as you can tell.";
+    list.append(li);
+  } else if (!company.length) {
     const li = document.createElement("li");
     li.className = "alone";
     li.textContent = "Nobody. Just you and the fog.";
@@ -479,7 +509,15 @@ function renderHarbor() {
 }
 
 // What you can do right here, explained in plain words.
+function stopGameTimers() {
+  clearInterval(snuffTimer);
+  clearInterval(fogTimer);
+  document.body.classList.remove("in-fog");
+}
+
 function renderSituation(company) {
+  // A countdown can still tick after the game screen has gone (game over, back to lobby).
+  if (!view || !lobby || lobby.phase !== "playing") return stopGameTimers();
   const alive = view.alive;
   const shade = myRole === "shade";
 
@@ -492,6 +530,26 @@ function renderSituation(company) {
   if (!alive && !$("wisp-art").innerHTML) {
     const self = playerOf(me);
     $("wisp-art").innerHTML = wispSVG({ lantern: self?.lantern, size: 42 });
+  }
+
+  // The Shades' fog.
+  const fogOn = !!lobby.fogUntil && lobby.phase === "playing";
+  document.body.classList.toggle("in-fog", fogOn);
+  $("fog-banner").hidden = !fogOn;
+  clearInterval(fogTimer);
+  if (fogOn) {
+    const tickFog = () => {
+      const left = Math.max(0, (lobby?.fogUntil ?? 0) - serverNow());
+      $("fog-secs").textContent = `${Math.ceil(left / 1000)}s`;
+      if (!left) clearInterval(fogTimer);
+    };
+    tickFog();
+    fogTimer = setInterval(tickFog, 500);
+    $("fog-text").textContent = shade && alive
+      ? "Your fog is down. The Keepers can't see faces — strike unseen."
+      : view.here === "lighthouse" && alive
+        ? "Fog! You're at the Lighthouse — relight the great lamp."
+        : "Fog! Faces are hidden. Relight the great lamp at the Lighthouse.";
   }
 
   // Cold lanterns lying here.
@@ -522,6 +580,25 @@ function renderSituation(company) {
     hint = "Everyone will gather in the square and hear whose lantern you found.";
   }
   const self = playerOf(me);
+  if (fogOn && alive && view.here === "lighthouse") {
+    const b = document.createElement("button");
+    b.className = "relight-btn wide";
+    b.textContent = "Relight the great lamp";
+    b.addEventListener("click", () => { send({ t: "relight" }); sfx.chime(true); });
+    actions.append(b);
+    if (!hint) hint = shade ? "Relighting it yourself would look very innocent…" : "Everyone will know you lifted the fog.";
+  }
+  if (alive && shade && lobby.phase === "playing" && !fogOn && view.fogReadyAt) {
+    const wait = Math.max(0, view.fogReadyAt - serverNow());
+    const b = document.createElement("button");
+    b.className = "fog-btn wide";
+    b.disabled = wait > 0;
+    b.textContent = wait > 0 ? `Call the fog · ready in ${Math.ceil(wait / 1000)}s` : "Call the fog";
+    b.addEventListener("click", () => {
+      if (confirm("Hide every face from the Keepers for 30 seconds? Anyone can lift it at the Lighthouse.")) send({ t: "fog" });
+    });
+    actions.append(b);
+  }
   if (alive && view.here === "market" && lobby.phase === "playing" && !self?.bellUsed && !view.cold.length) {
     const b = document.createElement("button");
     b.className = "bell-btn wide";
@@ -550,7 +627,8 @@ function renderSituation(company) {
       ? `You're alone with ${targets[0].name}. Your shadow is still gathering…`
       : `You're alone with ${targets[0].name}. Nobody would see.`;
     else if (targets.length > 1 && !hint) hint = `${targets.length} Keepers here — anyone left standing would see you.`;
-    if (targets.length && wait > 0) snuffTimer = setInterval(() => renderSituation(company), 1000);
+    const fogWait = view.fogReadyAt ? view.fogReadyAt - serverNow() : 0;
+    if ((targets.length && wait > 0) || (!fogOn && fogWait > 0)) snuffTimer = setInterval(() => renderSituation(company), 1000);
   }
   $("hint").textContent = hint;
   $("hint").hidden = !hint;
@@ -915,7 +993,7 @@ function renderOver(firstTime = false) {
     sfx.chime(keepersWon);
     overTab = "who";
     taleShown = null;
-    if (iWon !== null) recordGame(r.gameId, iWon, myRoleEnd);
+    if (iWon !== null) recordGame(r, iWon, myRoleEnd);
   }
 
   document.body.classList.toggle("is-shade", !keepersWon);
@@ -949,11 +1027,12 @@ function renderOver(firstTime = false) {
   };
   chip("game length", minutes(r.durationMs));
   if (rec.games) {
-    chip(rec.games === 1 ? "game played" : "games played", rec.games);
-    chip(rec.wins === 1 ? "win" : "wins", rec.wins);
+    chip(rec.wins === 1 ? "win" : "wins", `${rec.wins}/${rec.games}`);
     if (rec.streak > 1) chip("win streak", rec.streak);
+    if (rec.days > 1) chip("days in a row", rec.days);
   }
 
+  renderXP(r, firstTime);
   renderFates(r);
   renderHonors(r);
   renderTale(r);
@@ -1065,6 +1144,8 @@ function renderTale(r) {
       bell: `${n(e.who)} rang the emergency bell`,
       adrift: `${n(e.who)} was set adrift — ${e.wasShade ? "a Shade!" : "a Keeper"}`,
       spared: "The town couldn't agree. Nobody was set adrift.",
+      fog: `${n(e.who)} called the fog`,
+      relight: `${n(e.who)} relit the great lamp`,
       end: r.winner === "keepers" ? "Dawn. The Keepers win." : "Darkness. The Shades win.",
     }[e.kind];
     if (!text) continue;
@@ -1128,15 +1209,47 @@ async function shareTale() {
   }
 }
 
-// ---------- Your record on this device ----------
-function loadRecord() {
-  return { games: 0, wins: 0, streak: 0, best: 0, keeper: 0, shade: 0, last: null, ...(store.get("sh.record") || {}) };
+// ---------- Your record, XP and rank on this device ----------
+const RANKS = [
+  { name: "Deckhand", xp: 0 },
+  { name: "Lamplighter", xp: 300 },
+  { name: "Harbor Watch", xp: 800 },
+  { name: "Fogwalker", xp: 1600 },
+  { name: "Keeper of the Flame", xp: 3000 },
+  { name: "Lighthouse Legend", xp: 5000 },
+];
+
+function rankFor(xp) {
+  let i = 0;
+  while (i + 1 < RANKS.length && xp >= RANKS[i + 1].xp) i++;
+  const cur = RANKS[i], next = RANKS[i + 1];
+  return { index: i, name: cur.name, next: next?.name ?? null, toNext: next ? next.xp - xp : 0,
+    progress: next ? (xp - cur.xp) / (next.xp - cur.xp) : 1 };
 }
 
-function recordGame(gameId, won, role) {
+function loadRecord() {
+  return { games: 0, wins: 0, streak: 0, best: 0, keeper: 0, shade: 0, last: null,
+    xp: 0, lastDay: null, days: 0, lastGain: null, ...(store.get("sh.record") || {}) };
+}
+
+const today = (d = new Date()) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+
+/** What this game was worth, and why. */
+function xpFor(r, won, role) {
+  const mine = r.players.find((p) => p.id === me);
+  const parts = [["Played the night", 40]];
+  if (won) parts.push([`Won as ${role === "shade" ? "a Shade" : "a Keeper"}`, 100]);
+  if (mine?.tasksDone) parts.push([`${mine.tasksDone} task${mine.tasksDone > 1 ? "s" : ""} lit`, mine.tasksDone * 10]);
+  if (mine?.sharpVotes) parts.push([`Voted for a Shade${mine.sharpVotes > 1 ? ` ×${mine.sharpVotes}` : ""}`, mine.sharpVotes * 30]);
+  if (mine?.snuffs) parts.push([`${mine.snuffs} lantern${mine.snuffs > 1 ? "s" : ""} snuffed`, mine.snuffs * 25]);
+  for (const h of r.honors.filter((h) => h.who === me)) parts.push([h.title, 40]);
+  return parts;
+}
+
+function recordGame(r, won, role) {
   const rec = loadRecord();
-  if (rec.last === gameId) return; // already counted (e.g. after a refresh)
-  rec.last = gameId;
+  if (rec.last === r.gameId) return; // already counted (e.g. after a refresh)
+  rec.last = r.gameId;
   rec.games += 1;
   rec[role === "shade" ? "shade" : "keeper"] += 1;
   if (won) {
@@ -1146,7 +1259,51 @@ function recordGame(gameId, won, role) {
   } else {
     rec.streak = 0;
   }
+  // Days in a row you've played.
+  const t = today(), y = today(new Date(Date.now() - 86400000));
+  rec.days = rec.lastDay === t ? rec.days : rec.lastDay === y ? rec.days + 1 : 1;
+  rec.lastDay = t;
+  // XP.
+  const parts = xpFor(r, won, role);
+  const gained = parts.reduce((n, [, v]) => n + v, 0);
+  rec.lastGain = { gameId: r.gameId, before: rec.xp, after: rec.xp + gained, parts };
+  rec.xp += gained;
   store.set("sh.record", rec);
+}
+
+/** The XP card on the end screen: what you earned, your rank, and a rank-up moment. */
+function renderXP(r, animate) {
+  const rec = loadRecord();
+  const g = rec.lastGain;
+  const box = $("xp");
+  if (!g || g.gameId !== r.gameId) { box.hidden = true; return; }
+  box.hidden = false;
+  const before = rankFor(g.before), after = rankFor(g.after);
+  const ranked = after.index > before.index;
+  box.classList.toggle("ranked", ranked);
+  $("xp-rank").textContent = ranked ? `Rank up — ${after.name}!` : after.name;
+  $("xp-gain").textContent = `+${g.after - g.before} XP`;
+  $("xp-next").textContent = after.next ? `${after.toNext} XP to ${after.next}` : "The highest rank in the harbor.";
+  const why = $("xp-why");
+  why.innerHTML = "";
+  for (const [label, v] of g.parts) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span></span><span></span>`;
+    li.firstChild.textContent = label;
+    li.lastChild.textContent = `+${v}`;
+    why.append(li);
+  }
+  const fill = $("xp-fill");
+  const from = ranked ? 0 : before.progress;
+  fill.style.transition = "none";
+  fill.style.width = `${(animate ? from : after.progress) * 100}%`;
+  if (animate) {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      fill.style.transition = "width 1.6s cubic-bezier(.2,.8,.2,1) .4s";
+      fill.style.width = `${after.progress * 100}%`;
+    }));
+    if (ranked) setTimeout(() => { sfx.chime(true); buzz([40, 30, 40, 30, 120]); }, 900);
+  }
 }
 
 // ---------- In game ----------
@@ -1204,6 +1361,7 @@ function hidePeek() {
 // ---------- Lobby rendering ----------
 function renderLobby() {
   if (!lobby) return;
+  stopGameTimers();
   document.body.classList.remove("is-shade", "is-wisp");
   $("wisp-art").innerHTML = "";
   const isHost = lobby.hostId === me;
@@ -1254,10 +1412,43 @@ function renderLobby() {
     : `${count} of ${lobby.max} Keepers aboard. ${lobby.shades === 1 ? "One Shade" : `${lobby.shades} Shades`} will hide among you.`;
 
   $("host-controls").hidden = !isHost;
+  renderLevel(isHost, lobby.players.some((p) => p.isBot));
   $("waiting").hidden = isHost;
   $("add-bot").disabled = count >= lobby.max;
   $("start").disabled = need > 0;
   $("start").textContent = need ? `Need ${need} more` : "Start";
+}
+
+// ---------- How sharp are the bots? ----------
+const LEVEL_NOTE = {
+  easy: "Easy: slow to strike, easily fooled. Good for learning.",
+  normal: "Normal: the bots play a fair, honest game.",
+  cunning: "Cunning: Shade bots strike fast, call the fog, and frame Keepers with confident lies.",
+};
+
+/** Auto: pick the level that keeps games close, from this device's record. */
+function autoLevel() {
+  const rec = loadRecord();
+  if (rec.games < 3) return "normal";
+  const rate = rec.wins / rec.games;
+  return rate >= 0.6 ? "cunning" : rate <= 0.3 ? "easy" : "normal";
+}
+
+function renderLevel(isHost, hasBots) {
+  const st = lobby.settings ?? { botLevel: "normal", auto: false };
+  const chosen = st.auto ? "auto" : st.botLevel;
+  for (const b of document.querySelectorAll("#bot-level button")) {
+    b.setAttribute("aria-checked", String(b.dataset.level === chosen));
+    b.disabled = !isHost;
+  }
+  $("level-box").hidden = !hasBots && !isHost;
+  const auto = st.auto ? `Auto picked ${st.botLevel} from the host's record. ` : "";
+  $("level-note").textContent = auto + LEVEL_NOTE[st.botLevel] + (hasBots ? "" : " Add a bot to see it in action.");
+}
+
+function chooseLevel(level) {
+  if (level === "auto") send({ t: "settings", botLevel: autoLevel(), auto: true });
+  else send({ t: "settings", botLevel: level, auto: false });
 }
 
 function tag(text, kind) {
@@ -1269,6 +1460,7 @@ function tag(text, kind) {
 
 function initLobby() {
   $("add-bot").addEventListener("click", () => send({ t: "addBot" }));
+  for (const b of document.querySelectorAll("#bot-level button")) b.addEventListener("click", () => chooseLevel(b.dataset.level));
   $("start").addEventListener("click", () => send({ t: "start" }));
   const leave = () => {
     leaving = true;

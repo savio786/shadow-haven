@@ -1,4 +1,6 @@
 :root {
+  --serif: "Fraunces", Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --fog: #0e1220;
   --fog-2: #161c2e;
   --panel: #151b2c;
@@ -21,9 +23,35 @@ body {
   min-height: 100vh;
   background: radial-gradient(ellipse 120% 600px at 50% 0%, var(--fog-2), var(--fog)) no-repeat var(--fog);
   color: var(--ink);
-  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  font-family: var(--serif);
+  font-optical-sizing: auto;
   line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
 }
+
+/* A slow fog drifting behind everything, and a few faint stars. */
+body::before, body::after {
+  content: ""; position: fixed; inset: -10% -30%; z-index: -1; pointer-events: none;
+}
+body::before {
+  background:
+    radial-gradient(1px 1px at 12% 18%, #ffffff55, transparent 60%),
+    radial-gradient(1px 1px at 72% 9%, #ffffff44, transparent 60%),
+    radial-gradient(1.5px 1.5px at 88% 26%, #ffffff33, transparent 60%),
+    radial-gradient(1px 1px at 34% 6%, #ffffff33, transparent 60%);
+}
+body::after {
+  background:
+    radial-gradient(40% 18% at 20% 70%, #9fb4d614, transparent 70%),
+    radial-gradient(45% 20% at 80% 40%, #9fb4d610, transparent 70%),
+    radial-gradient(35% 14% at 50% 95%, #9fb4d612, transparent 70%);
+  animation: ambientfog 40s ease-in-out infinite alternate;
+}
+@keyframes ambientfog { from { transform: translateX(-4%); } to { transform: translateX(4%); } }
+
+h1, h2, h3, .room-code { font-family: var(--serif); font-weight: 600; letter-spacing: .01em; }
+button, input, .chip, .tag, .tags .tag, .eyebrow, .meta-label, .role-pill, .timer span, .chat p, .chat .who,
+.vote-card, .tabs button, .over-wait, .toast, .banner, .goal, .hint, .task-list, label { font-family: var(--sans); }
 
 .screen {
   max-width: 560px;
@@ -204,39 +232,60 @@ body.is-shade .shade-svg .flame { animation-duration: 3.6s; }
 
 /* ---------- Harbor map ---------- */
 .harbor { margin: 16px 0 12px; }
-.map-wrap { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); line-height: 0; }
+.map-wrap { border-radius: 18px; overflow: hidden; border: 1px solid var(--line); line-height: 0; box-shadow: 0 14px 40px rgba(0,0,0,.4); }
 .harbor-map { width: 100%; height: auto; display: block; }
-.harbor-map .land { fill: #1a2233; }
+.harbor-map .land { fill: #18202f; }
 .harbor-map .shore { fill: none; stroke: #2c3a55; stroke-width: 3; }
-.harbor-map .waves path { fill: none; stroke: #1f3a58; stroke-width: 1.5; stroke-linecap: round; }
-.harbor-map .path { stroke: #3a4560; stroke-width: 3; stroke-dasharray: 2 6; stroke-linecap: round; }
-.harbor-map .path.live { stroke: var(--flame); opacity: .75; }
+.harbor-map .waves path { fill: none; stroke: #23476b; stroke-width: 1.5; stroke-linecap: round; animation: lap 3.2s ease-in-out infinite; }
+.harbor-map .star { fill: #dfe8ff; animation: twinkle 3s ease-in-out infinite; }
+.harbor-map .path { fill: none; stroke: #2f3a52; stroke-width: 5; stroke-linecap: round; }
+.harbor-map .path.live { stroke: var(--flame); opacity: .55; stroke-dasharray: 1 9; stroke-width: 4; animation: march 1.4s linear infinite; }
+@keyframes march { to { stroke-dashoffset: -20; } }
 
 .harbor-map .place .halo { fill: transparent; }
-.harbor-map .place .disc { fill: #232c42; stroke: #3a4560; stroke-width: 1.5; }
-.harbor-map .place .icon { fill: none; stroke: #8a93a6; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
-.harbor-map .place .icon .cut { stroke-width: 1; opacity: .7; }
-.harbor-map .place .label { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: Georgia, serif; }
-.harbor-map .place { opacity: .55; transition: opacity .2s; }
+.harbor-map .place .building { opacity: .55; transition: opacity .25s, filter .25s; }
+.harbor-map .place .building .lit { opacity: .55; }
+.harbor-map .place .building .beam { opacity: .0; }
+.harbor-map .place .label rect { fill: #0e1220cc; stroke: #2a3350; stroke-width: .8; }
+.harbor-map .place .label text { fill: var(--muted); font: 600 8.2px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .02em; text-anchor: middle; }
 
-.harbor-map .place.here { opacity: 1; }
-.harbor-map .place.here .disc { fill: #2e2a22; stroke: none; }
-.harbor-map .place.here .icon { stroke: #ffe2b0; }
-.harbor-map .place.here .label { fill: var(--ink); font-weight: 600; }
-.harbor-map .place.here .ring { fill: none; stroke-width: 2.5; animation: breathe 2.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.harbor-map .place.here .building { opacity: 1; filter: drop-shadow(0 0 6px #ffcf7a55); }
+.harbor-map .place.here .building .lit { opacity: 1; }
+.harbor-map .place.here .label rect { fill: #2e2716; stroke: var(--flame); }
+.harbor-map .place.here .label text { fill: var(--ink); }
+.harbor-map .place.here .ring { fill: none; stroke-width: 2; opacity: .8; animation: breathe 2.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
 
-.harbor-map .place.next { opacity: 1; cursor: pointer; }
-.harbor-map .place.next .halo { fill: var(--flame); opacity: .14; animation: beckon 1.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
-.harbor-map .place.next .disc { stroke: var(--flame); }
-.harbor-map .place.next .label { fill: var(--ink); }
-.harbor-map .place.next:hover .disc, .harbor-map .place.next:focus .disc { fill: #2b3550; }
+.harbor-map .place.next { cursor: pointer; }
+.harbor-map .place.next .building { opacity: .9; }
+.harbor-map .place.next .building .lit { opacity: .85; }
+.harbor-map .place.next .halo { fill: var(--flame); opacity: .1; animation: beckon 1.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.harbor-map .place.next .label rect { stroke: var(--flame); }
+.harbor-map .place.next .label text { fill: var(--ink); }
+.harbor-map .place.next:hover .halo, .harbor-map .place.next:focus-visible .halo { opacity: .28; }
 .harbor-map .place.next:focus { outline: none; }
-.harbor-map .place.next:focus-visible .halo { opacity: .4; }
 .harbor-map .place.next.wait { cursor: progress; }
-.harbor-map .place.next.wait .halo { animation: none; opacity: .05; }
+.harbor-map .place.next.wait .halo { animation: none; opacity: .04; }
 
-@keyframes breathe { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.12); opacity: .6; } }
-@keyframes beckon { 0%, 100% { transform: scale(.9); } 50% { transform: scale(1.1); } }
+.harbor-map .place .building .beam { transform-origin: 0 -24px; }
+.harbor-map .place:is(.here, .next) .building .beam { opacity: 1; animation: lhsweep 5s ease-in-out infinite; }
+@keyframes lhsweep { 0%, 100% { transform: rotate(-8deg); } 50% { transform: rotate(10deg); } }
+.harbor-map .building .hands { transform-origin: 0 -12px; animation: tickhand 60s linear infinite; }
+@keyframes tickhand { to { transform: rotate(360deg); } }
+.harbor-map .building .bob { animation: bob 3s ease-in-out infinite; }
+@keyframes bob { 50% { transform: translateY(1.5px) rotate(-1.5deg); } }
+
+.harbor-map .mini .mini-flame { animation: flicker 2.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.harbor-map .mini.wisp { animation: hover 3s ease-in-out infinite; }
+.harbor-map .mini.shape { animation: hover 4s ease-in-out infinite; }
+
+.harbor-map .fogbank ellipse { animation: fogdrift 18s ease-in-out infinite alternate; }
+@keyframes fogdrift { from { transform: translateX(-30px); } to { transform: translateX(30px); } }
+.harbor-map .fogbank ellipse:nth-child(2) { animation-duration: 24s; animation-direction: alternate-reverse; }
+.harbor-map.fogged .fog-veil { fill: #a9b8cf; opacity: .26; animation: fogpulse 4s ease-in-out infinite; }
+.harbor-map.fogged .building .lit { opacity: .25 !important; }
+@keyframes fogpulse { 50% { opacity: .38; } }
+@keyframes breathe { 0%, 100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.12); opacity: .5; } }
+@keyframes beckon { 0%, 100% { transform: scale(.92); } 50% { transform: scale(1.06); } }
 
 .move-hint { margin: 8px 0 0; }
 
@@ -425,7 +474,7 @@ body.flash::after {
 .meeting .countdown span { background: #c9923e; }
 
 /* ---------- The meeting ---------- */
-.meeting { text-align: left; padding-top: 20px; }
+.meeting { text-align: left; padding-top: 48px; }
 .meet-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
 .meet-bell .bell-svg .bell-swing { animation-iteration-count: 2; }
 .meet-title h2 { font-size: 1.25rem; margin: 2px 0; color: #ffd59a; line-height: 1.2; }
@@ -499,7 +548,7 @@ body.is-shade .chat .line.mine p { background: #261e3a; border-color: #4b3a78; }
 button.bell-btn { display: flex; align-items: center; justify-content: center; gap: 10px; background: #2b2216; border-color: #8a6430; color: #ffd59a; }
 button.bell-btn .bell-waves { display: none; }
 .mute {
-  position: fixed; bottom: 12px; left: 12px; z-index: 6; width: 38px; height: 38px; padding: 0;
+  position: fixed; top: 8px; right: 8px; z-index: 6; width: 34px; height: 34px; padding: 0; opacity: .8;
   border-radius: 50%; background: #151b2ccc; font-size: 1rem; line-height: 1; backdrop-filter: blur(4px);
 }
 
@@ -588,6 +637,49 @@ button.bell-btn .bell-waves { display: none; }
 .welcome-hi { margin: 0 0 10px; font-size: 1.05rem; color: #ffd59a; }
 .welcome .over-meta { margin-bottom: 12px; }
 
+/* ---------- The Shades' fog ---------- */
+.fog-banner {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  margin-top: 10px; padding: 10px 14px; border-radius: 12px;
+  background: linear-gradient(90deg, #2a3348, #1b2233); border: 1px solid #5b6a86; color: #dbe5f5;
+  font-family: var(--sans); font-size: .92rem; animation: fogpulse2 3s ease-in-out infinite;
+}
+body.is-shade .fog-banner { background: linear-gradient(90deg, #2a1f44, #1b1730); border-color: #6a4fc9; color: #e3d8ff; }
+.fog-secs { font-weight: 700; font-variant-numeric: tabular-nums; }
+@keyframes fogpulse2 { 50% { box-shadow: 0 0 22px #9fb4d633; } }
+body.in-fog .here { background: linear-gradient(180deg, #1c2333, var(--panel)); }
+.here-list li.shapes { color: #b9c6db; }
+button.relight-btn { background: #ffd59a; color: #1b1206; border: 0; font-weight: 700; animation: urge 1.6s ease-in-out infinite; }
+button.fog-btn { background: #1f2638; border-color: #6a7a99; color: #dbe5f5; }
+body.is-shade button.fog-btn:not(:disabled) { border-color: #9b7bff; color: #e3d8ff; }
+
+/* ---------- Bot cunning ---------- */
+.level-box { margin: 4px 0 14px; }
+.level-box .eyebrow { margin-bottom: 6px; }
+.segmented { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+.segmented button { border: 0; border-radius: 9px; padding: 8px 4px; background: transparent; color: var(--muted); font-size: .88rem; }
+.segmented button[aria-checked="true"] { background: var(--panel-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--flame); }
+.segmented button:disabled { cursor: default; opacity: 1; }
+.segmented button:disabled:not([aria-checked="true"]) { opacity: .5; }
+#level-note { margin: 6px 2px 0; }
+
+/* ---------- XP and ranks ---------- */
+.xp { margin: 0 auto 16px; max-width: 380px; padding: 12px 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); text-align: left; }
+.xp.ranked { border-color: var(--flame); box-shadow: 0 0 30px #ffb34733; animation: rankglow 2s ease-in-out 2; }
+@keyframes rankglow { 50% { box-shadow: 0 0 50px #ffb34766; } }
+.xp-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.xp-rank { font-family: var(--serif); font-weight: 600; font-size: 1.05rem; color: #ffd59a; }
+.over.shade .xp-rank { color: #d9ccff; }
+.xp-gain { font: 700 1rem var(--sans); color: #9bd36a; }
+.xp-bar { height: 8px; margin: 8px 0 6px; border-radius: 999px; background: #1a2030; overflow: hidden; }
+.xp-bar.small { height: 5px; margin: 6px auto 0; max-width: 260px; }
+.xp-bar span { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, #b8742a, #ffb347, #ffe2a8); }
+.xp-next { margin: 0; font: .78rem var(--sans); color: var(--muted); }
+.xp-why { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 3px; font: .82rem var(--sans); color: var(--muted); }
+.xp-why li { display: flex; justify-content: space-between; }
+.xp-why li span:last-child { color: #c9e5a8; }
+.welcome-rank { margin: 0 auto 12px; font: .85rem var(--sans); color: var(--muted); }
+
 /* ---------- How to play ---------- */
 .howto-card { max-height: calc(100vh - 32px); overflow-y: auto; }
 .howto-steps { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 14px; counter-reset: step; }
@@ -635,16 +727,20 @@ button.bell-btn .bell-waves { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  body::after, .harbor-map .waves path, .harbor-map .star, .harbor-map .path.live, .harbor-map .fogbank ellipse,
+  .harbor-map .building .beam, .harbor-map .building .hands, .harbor-map .building .bob, .harbor-map .mini .mini-flame,
+  .harbor-map .mini.wisp, .harbor-map .mini.shape, .harbor-map.fogged .fog-veil { animation: none !important; }
   .keeper-svg .flame, .shade-svg .smoke, .reveal h1, .reveal-text,
   .harbor-map .place .ring, .harbor-map .place .halo, .here h3.arrive, .shake, .tug,
   button.report, .cold-svg .frost, .cold-svg .breath, .wisp-svg, body.flash::after,
   .snuffed-overlay, .snuffed-card .cold-svg, .bell-svg .bell-swing, .bell-svg .bell-waves,
   .chat .line, .typing::after, .boat-svg .water path, .fog-art, .tally li,
   .end-scene .beam-sweep, .end-scene .shore-flame, .end-scene .eyes, .tab-panel, .honor, .welcome,
-  .tale-text.waiting { animation: none; }
+  .tale-text.waiting, .fog-banner, button.relight-btn, .xp.ranked { animation: none; }
   .boat-svg .boat { animation-duration: .01s; }
   .chat { scroll-behavior: auto; }
 }
 
 /* On the end screen the action bar owns the bottom edge. */
-body[data-screen="over"] .mute { bottom: auto; top: 12px; left: auto; right: 12px; }
+.mute:hover { opacity: 1; }
+.hero .tag { font-family: var(--serif); }

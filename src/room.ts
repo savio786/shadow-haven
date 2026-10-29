@@ -10,13 +10,15 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./worker";
 import {
-  BOT_NAMES, CHAT_MAX, DISCUSS_MS, FIRST_SNUFF_MS, GATHER_MS, LANTERNS, MAX_PLAYERS, MIN_PLAYERS,
+  BOT_NAMES, CHAT_MAX, DISCUSS_MS, FIRST_SNUFF_MS, FOG_COOLDOWN_MS, FOG_FIRST_MS, FOG_MS, GATHER_MS, LANTERNS, MAX_PLAYERS, MIN_PLAYERS,
   MOVE_COOLDOWN_MS, NAME_MAX, RESULT_MS, REVEAL_MS, SHAPES, SNUFF_COOLDOWN_MS, VOTE_MS, shadeCount,
   type ChatLine, type ClientMsg, type GameResult, type MatchEvent, type Meeting, type Phase, type PlayerSummary,
-  type PublicPlayer, type PublicTask, type Role, type ServerMsg,
+  type BotLevel, type PublicPlayer, type PublicTask, type Role, type ServerMsg, type Settings,
 } from "./shared";
-import { PATHS, START, adjacent, isLoc, type Loc } from "./harbor";
-import { chooseReport, chooseSnuff, decide, foundCold, newBrain, observe, remember, type Brain } from "./bots";
+import { LOCATIONS, PATHS, START, adjacent, isLoc, route, type Loc } from "./harbor";
+import {
+  chooseFog, chooseRelight, chooseReport, chooseSnuff, decide, foundCold, newBrain, observe, remember, type Brain,
+} from "./bots";
 import { TASKS, assignTasks, checkAnswer, makeChallenge, type Attempt, type Task } from "./tasks";
 import { chooseVote, mentions, tally, type MindContext } from "./minds";
 import { AiGate, DEFAULT_MODEL, speak, write } from "./ai";
@@ -73,7 +75,12 @@ interface RoomState {
   log: MatchEvent[];             // what happened this game, for the end screen
   gameNo: number;
   startedAt: number;             // when play began (after the reveal)
+  settings: Settings;
+  fogUntil: number | null;       // the Shades' fog is down until then
+  fogReadyAt: number;            // the Shades can call the fog again from then
 }
+
+const LEVELS: BotLevel[] = ["easy", "normal", "cunning"];
 
 interface ColdLantern {
   victim: string;
@@ -87,6 +94,7 @@ function emptyRoom(): RoomState {
     code: "", created: false, createdAt: 0, phase: "lobby", hostId: null, players: [],
     revealEndsAt: null, result: null, cold: [], meeting: null, revealed: [], votes: {}, chatSeq: 0,
     log: [], gameNo: 0, startedAt: 0,
+    settings: { botLevel: "normal", auto: false }, fogUntil: null, fogReadyAt: 0,
   };
 }
 
@@ -210,6 +218,9 @@ export class Room extends DurableObject<Env> {
       case "start": return this.onStart(ws, me);
       case "endGame": return this.onEndGame(ws, me);
       case "playAgain": return this.onPlayAgain(ws, me);
+      case "settings": return this.onSettings(ws, me, msg);
+      case "fog": return this.onFog(ws, me);
+      case "relight": return this.onRelight(ws, me);
       case "move": return this.onMove(ws, me, msg.to);
       case "taskStart": return this.onTaskStart(ws, me, msg.id);
       case "taskDone": return this.onTaskDone(ws, me, msg);
@@ -253,6 +264,11 @@ export class Room extends DurableObject<Env> {
 
     if (s.phase === "meeting" && s.meeting) {
       if (this.meetingTick(now)) lobbyChanged = true;
+    }
+
+    if (s.phase === "playing" && s.fogUntil && now >= s.fogUntil) {
+      this.liftFog(now, null);
+      lobbyChanged = true;
     }
 
     if (s.phase === "playing" && this.anyHumanHere()) {
@@ -464,6 +480,11 @@ export class Room extends DurableObject<Env> {
     this.state.log = [];
     this.state.gameNo += 1;
     this.state.startedAt = playFrom;
+    this.state.fogUntil = null;
+    this.state.fogReadyAt = playFrom + FOG_FIRST_MS;
+    if (this.state.settings.botLevel === "easy") {
+      for (const p of this.state.players) if (p.isBot && p.role === "shade") p.snuffReadyAt += 15_000;
+    }
     this.state.votes = {};
 
     this.state.phase = "reveal";
@@ -499,6 +520,7 @@ export class Room extends DurableObject<Env> {
 
   private resetToLobby() {
     this.state.phase = "lobby";
+    this.state.fogUntil = null;
     this.state.revealEndsAt = null;
     this.state.result = null;
     this.state.cold = [];
@@ -597,7 +619,7 @@ export class Room extends DurableObject<Env> {
     const sockets = this.socketsByPlayer();
     for (const p of this.state.players) {
       if (!p.loc || !locs.includes(p.loc)) continue;
-      if (p.brain) observe(p.brain, p.loc, this.visibleTo(p), now);
+      if (p.brain && !this.fogHides(p)) observe(p.brain, p.loc, this.visibleTo(p), now);
       for (const ws of sockets.get(p.id) ?? []) this.sendView(ws, p);
     }
   }
@@ -627,9 +649,25 @@ export class Room extends DurableObject<Env> {
             return;
           }
         }
+        const level = this.state.settings.botLevel;
+        // The fog: Shades may call it; anyone at the Lighthouse may relight the lamp.
+        if (bot.role === "shade" && !this.state.fogUntil && now >= this.state.fogReadyAt && chooseFog(level)) {
+          this.callFog(bot, now);
+        }
+        if (this.state.fogUntil && bot.loc === "lighthouse" && chooseRelight(bot.role, level)) {
+          this.liftFog(now, bot);
+        } else if (this.state.fogUntil && bot.role === "keeper" && !bot.working && now >= bot.readyAt && chooseRelight("keeper", level)) {
+          // Head for the lamp.
+          const next = route(bot.loc, "lighthouse")[0];
+          if (next) {
+            this.moveTo(bot, next, now);
+            bot.brain.nextMoveAt = now + MOVE_COOLDOWN_MS + 300;
+            continue;
+          }
+        }
         // A Shade alone with a Keeper strikes.
         if (bot.role === "shade" && now >= bot.snuffReadyAt) {
-          const target = chooseSnuff(this.visibleTo(bot), allies);
+          const target = chooseSnuff(this.visibleTo(bot), allies, level);
           const victim = this.player(target);
           if (victim) {
             this.snuff(bot, victim, now);
@@ -649,6 +687,70 @@ export class Room extends DurableObject<Env> {
       bot.brain.nextMoveAt = now + Math.max(choice.dwellMs, MOVE_COOLDOWN_MS);
       this.dirty = true;
     }
+  }
+
+  // ---------- Room settings ----------
+
+  private async onSettings(ws: WebSocket, me: Player, msg: Extract<ClientMsg, { t: "settings" }>) {
+    if (!this.requireHost(ws, me) || !this.requireLobby(ws)) return;
+    if (!LEVELS.includes(msg.botLevel)) return this.send(ws, { t: "error", code: "bad_setting", text: "Unknown setting." });
+    this.state.settings = { botLevel: msg.botLevel, auto: !!msg.auto };
+    await this.save();
+    this.broadcastLobby();
+  }
+
+  // ---------- The Shades' fog ----------
+
+  private async onFog(ws: WebSocket, me: Player) {
+    const s = this.state;
+    const now = Date.now();
+    if (s.phase !== "playing" || me.role !== "shade" || !me.alive) {
+      return this.send(ws, { t: "error", code: "cant_fog", text: "You can't do that." });
+    }
+    if (s.fogUntil) return this.send(ws, { t: "error", code: "fog_on", text: "The fog is already down." });
+    if (now < s.fogReadyAt) return this.send(ws, { t: "error", code: "cooldown", text: "The fog isn't ready yet." });
+    this.callFog(me, now);
+    await this.save();
+    this.broadcastLobby();
+    await this.scheduleAlarm();
+  }
+
+  private callFog(by: Player, now: number) {
+    const s = this.state;
+    s.fogUntil = now + FOG_MS;
+    s.fogReadyAt = s.fogUntil + FOG_COOLDOWN_MS;
+    this.logEvent({ kind: "fog", who: by.id });
+    this.dirty = true;
+    this.broadcast({ t: "notice", text: "A cold fog rolls in. Faces vanish — relight the great lamp at the Lighthouse!" });
+    this.refresh([...LOCATIONS], now);
+  }
+
+  /** Anyone alive at the Lighthouse can relight the lamp and lift the fog — even a Shade, for cover. */
+  private async onRelight(ws: WebSocket, me: Player) {
+    if (this.state.phase !== "playing" || !this.state.fogUntil || !me.alive) {
+      return this.send(ws, { t: "error", code: "no_fog", text: "There's no fog to lift." });
+    }
+    if (me.loc !== "lighthouse") return this.send(ws, { t: "error", code: "not_here", text: "The great lamp is at the Lighthouse." });
+    this.liftFog(Date.now(), me);
+    await this.save();
+    this.broadcastLobby();
+    await this.scheduleAlarm();
+  }
+
+  private liftFog(now: number, by: Player | null) {
+    const s = this.state;
+    if (!s.fogUntil) return;
+    s.fogUntil = null;
+    s.fogReadyAt = Math.max(s.fogReadyAt, now + FOG_COOLDOWN_MS);
+    if (by) this.logEvent({ kind: "relight", who: by.id });
+    this.dirty = true;
+    this.broadcast({ t: "notice", text: by ? `${by.name} relit the great lamp. The fog lifts.` : "The fog thins and drifts out to sea." });
+    this.refresh([...LOCATIONS], now);
+  }
+
+  /** In the fog, living Keepers see shapes, not faces. */
+  private fogHides(viewer: Player) {
+    return !!this.state.fogUntil && viewer.alive && viewer.role === "keeper";
   }
 
   // ---------- Snuffing, cold lanterns and the bell ----------
@@ -689,10 +791,13 @@ export class Room extends DurableObject<Env> {
     for (const ws of sockets.get(victim.id) ?? []) this.send(ws, { t: "snuffed", by: shade.id });
     for (const other of this.state.players) {
       if (other.id === shade.id || other.id === victim.id || !other.alive || other.loc !== loc) continue;
-      if (other.brain) remember(other.brain, { kind: "sawSnuff", who: shade.id, victim: victim.id, loc, at: now });
-      const text = `You saw ${shade.name} snuff ${victim.name}'s lantern!`;
+      const blind = this.fogHides(other);
+      if (other.brain && !blind) remember(other.brain, { kind: "sawSnuff", who: shade.id, victim: victim.id, loc, at: now });
+      const text = blind
+        ? `A shape in the fog snuffed ${victim.name}'s lantern!`
+        : `You saw ${shade.name} snuff ${victim.name}'s lantern!`;
       for (const ws of sockets.get(other.id) ?? []) {
-        this.send(ws, { t: "witness", kind: "snuff", who: shade.id, victim: victim.id, loc, text });
+        this.send(ws, { t: "witness", kind: "snuff", who: blind ? "" : shade.id, victim: victim.id, loc, text });
       }
     }
     this.refresh([loc], now);
@@ -732,6 +837,7 @@ export class Room extends DurableObject<Env> {
     const stageEndsAt = now + GATHER_MS;
     s.phase = "meeting";
     s.votes = {};
+    s.fogUntil = null; // the bell cuts through the fog
     s.meeting = {
       kind,
       reporter: reporter.id,
@@ -867,6 +973,7 @@ export class Room extends DurableObject<Env> {
       chat: m.chat,
       replyTo,
       now: Date.now(),
+      level: s.settings.botLevel,
     };
   }
 
@@ -980,6 +1087,7 @@ export class Room extends DurableObject<Env> {
     s.phase = "playing";
     s.meeting = null;
     s.votes = {};
+    s.fogReadyAt = Math.max(s.fogReadyAt, now + FOG_FIRST_MS);
     for (const p of s.players) {
       p.readyAt = now;
       if (p.role === "shade") p.snuffReadyAt = Math.max(p.snuffReadyAt, now + FIRST_SNUFF_MS);
@@ -1155,8 +1263,11 @@ export class Room extends DurableObject<Env> {
       t: "view",
       here: p.loc,
       neighbors: PATHS[p.loc],
-      present: this.visibleTo(p),
+      present: this.fogHides(p) ? [] : this.visibleTo(p),
       wisps: p.alive ? [] : this.visibleTo(p).filter((id) => !this.player(id)?.alive),
+      fog: this.fogHides(p),
+      shapes: this.visibleTo(p).length,
+      fogReadyAt: p.role === "shade" ? this.state.fogReadyAt : null,
       cold: this.state.cold.filter((c) => c.loc === p.loc).map((c) => c.victim),
       alive: p.alive,
       readyAt: p.readyAt,
@@ -1253,6 +1364,8 @@ export class Room extends DurableObject<Env> {
       result: s.result,
       meeting: s.meeting,
       now: Date.now(),
+      settings: s.settings,
+      fogUntil: s.phase === "playing" ? s.fogUntil : null,
       players: this.state.players.map((p) => ({
         id: p.id,
         name: p.name,
@@ -1298,6 +1411,7 @@ export class Room extends DurableObject<Env> {
     const s = this.state;
     const times: number[] = [];
     if (s.revealEndsAt) times.push(s.revealEndsAt);
+    if (s.fogUntil) times.push(s.fogUntil);
     if (s.meeting) {
       times.push(s.meeting.stageEndsAt);
       for (const t of this.botTurns) times.push(t.at);

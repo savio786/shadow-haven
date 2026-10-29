@@ -65,7 +65,7 @@ export interface Honor {
 
 export interface MatchEvent {
   at: number;                // ms since play began
-  kind: "snuff" | "report" | "bell" | "adrift" | "spared";
+  kind: "snuff" | "report" | "bell" | "adrift" | "spared" | "fog" | "relight";
   who?: string;              // snuffer / reporter / ringer / the one set adrift
   victim?: string;
   loc?: string;
@@ -91,6 +91,17 @@ export const MOVE_COOLDOWN_MS = 1500;
 export const FIRST_SNUFF_MS = 15_000;
 /** …and then has to wait this long between snuffs. */
 export const SNUFF_COOLDOWN_MS = 25_000;
+
+/** The Shades' fog: Keepers can't make out faces until it lifts or the lamp is relit. */
+export const FOG_FIRST_MS = 30_000;    // not in the first 30s of play (or after a meeting)
+export const FOG_MS = 30_000;          // how long it lasts if nobody relights the lamp
+export const FOG_COOLDOWN_MS = 60_000; // rest after it lifts
+
+export type BotLevel = "easy" | "normal" | "cunning";
+export interface Settings {
+  botLevel: BotLevel;
+  auto: boolean;   // the host's device picked the level from their record
+}
 
 /** A meeting: gather at the bell, talk it over, vote, hear the verdict. */
 export const GATHER_MS = 6000;
@@ -158,6 +169,9 @@ export type ClientMsg =
   | { t: "start" }
   | { t: "endGame" }
   | { t: "playAgain" }
+  | { t: "settings"; botLevel: BotLevel; auto?: boolean }
+  | { t: "fog" }
+  | { t: "relight" }
   | { t: "move"; to: string }
   | { t: "taskStart"; id: string }
   | { t: "taskDone"; id: string; nonce: string; answer?: unknown }
@@ -187,6 +201,8 @@ export type ServerMsg =
       result: GameResult | null;   // once the game has ended
       meeting: Meeting | null;     // while everyone is gathered at the bell
       now: number;                 // server clock, so timers line up
+      settings: Settings;
+      fogUntil: number | null;     // the fog is down until then (everyone knows)
     }
   // Sent privately to one player. Never broadcast.
   | { t: "role"; role: Role; allies: string[] }
@@ -201,6 +217,9 @@ export type ServerMsg =
       wisps: string[];          // (wisps only) which of those present are wisps too
       readyAt: number;          // when you can walk again
       snuffReadyAt: number | null; // Shades only: when you can snuff again
+      fog: boolean;                // you're in the fog: names hidden
+      shapes: number;              // in the fog: how many shapes are here
+      fogReadyAt: number | null;   // Shades only: when the fog can be called
       now: number;
     }
   // Private: your lantern was snuffed.

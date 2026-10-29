@@ -8,5 +8,6 @@ await import("./harbor.test.mjs");
 await import("./tasks.test.mjs");
 await import("./snuff.test.mjs");
 await import("./meeting.test.mjs");
+await import("./fog.test.mjs");
 await import("./end.test.mjs");
 process.exit(process.exitCode ?? 0);

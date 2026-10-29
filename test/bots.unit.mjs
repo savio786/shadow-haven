@@ -12,7 +12,7 @@ await build({
   entryPoints: { bots: "src/bots.ts", harbor: "src/harbor.ts" },
   outdir: out, format: "esm", bundle: true, platform: "neutral", logLevel: "silent",
 });
-const { decide, newBrain, observe, lastSeen, vouch, chooseSnuff, chooseReport, foundCold, remember } = await import(out + "bots.js");
+const { decide, newBrain, observe, lastSeen, vouch, chooseSnuff, chooseReport, foundCold, remember, chooseFog, chooseRelight } = await import(out + "bots.js");
 const { route, PATHS, LOCATIONS } = await import(out + "harbor.js");
 
 console.log("Shadow Haven bot brain tests");
@@ -201,6 +201,19 @@ await test("evidence is remembered, and the lamp vouches", async () => {
   remember(b, { kind: "lamp", who: "k", loc: "lighthouse", at: 3 });
   assert.equal(b.evidence.length, 2);
   assert.deepEqual(b.vouched, ["k"]);
+});
+
+await test("cunning sets how eagerly Shade bots strike and call the fog", async () => {
+  const count = (fn) => { let n = 0; for (let i = 0; i < 2000; i++) if (fn()) n++; return n; };
+  const easy = count(() => chooseSnuff(["k"], [], "easy"));
+  const normal = count(() => chooseSnuff(["k"], [], "normal"));
+  const cunning = count(() => chooseSnuff(["k"], [], "cunning"));
+  assert.ok(easy < normal && normal < cunning, `${easy} < ${normal} < ${cunning}`);
+  assert.equal(count(() => chooseFog("easy")), 0, "easy Shades never call the fog");
+  assert.ok(count(() => chooseFog("cunning")) > count(() => chooseFog("normal")));
+  assert.ok(count(() => chooseRelight("keeper", "normal")) > count(() => chooseRelight("shade", "normal")),
+    "Keepers rush to the lamp; Shades only sometimes relight it for cover");
+  assert.equal(count(() => chooseRelight("shade", "easy")), 0);
 });
 
 done("bots");

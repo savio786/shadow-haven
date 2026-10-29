@@ -4,7 +4,7 @@
 // The same memory will later feed the AI that lets bots talk in meetings.
 
 import { LOCATIONS, PATHS, route, type Loc } from "./harbor";
-import type { Role } from "./shared";
+import type { BotLevel, Role } from "./shared";
 import { TASKS } from "./tasks";
 
 export type Personality = "wanderer" | "homebody" | "social" | "watcher";
@@ -86,10 +86,23 @@ export function foundCold(brain: Brain, loc: Loc, victim: string, now: number, s
  * sight (a fellow Shade watching doesn't count) — never in front of a crowd.
  * @param visible living players here, not counting the bot
  */
-export function chooseSnuff(visible: string[], allies: string[]): string | null {
+export function chooseSnuff(visible: string[], allies: string[], level: BotLevel = "normal"): string | null {
   const keepers = visible.filter((id) => !allies.includes(id));
   if (keepers.length !== 1) return null;
-  return rand() < 0.85 ? keepers[0] : null;
+  return rand() < SNUFF_CHANCE[level] ? keepers[0] : null;
+}
+
+const SNUFF_CHANCE: Record<BotLevel, number> = { easy: 0.45, normal: 0.85, cunning: 0.97 };
+
+/** Each turn, how likely a Shade bot is to call the fog when it can. */
+export function chooseFog(level: BotLevel): boolean {
+  return rand() < ({ easy: 0, normal: 0.08, cunning: 0.2 } as const)[level];
+}
+
+/** In the fog, will this bot head for the lamp (Keepers) — or relight it for cover (Shades)? */
+export function chooseRelight(role: Role, level: BotLevel): boolean {
+  if (role === "keeper") return rand() < ({ easy: 0.4, normal: 0.75, cunning: 0.95 } as const)[level];
+  return rand() < ({ easy: 0, normal: 0.12, cunning: 0.3 } as const)[level];
 }
 
 /** Will this bot report a cold lantern it's standing over? */
