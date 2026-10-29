@@ -126,7 +126,7 @@ await test("Keeper bots work on a task where they stand, and head for the neares
   assert.equal(d.to, null);
   assert.ok(d.dwellMs >= 6000, "lighting candles takes a while");
 
-  // Diligent bots usually set off toward the nearest task.
+  // Bots often set off toward the nearest task (but, like people, not always).
   let toward = 0;
   for (let i = 0; i < 200; i++) {
     const k = newBrain(0);
@@ -135,7 +135,7 @@ await test("Keeper bots work on a task where they stand, and head for the neares
     const r = decide(k, "market", "keeper", [], 1000, ["lighthouse", "netloft"]);
     if (r.to === "netloft") toward++;
   }
-  assert.ok(toward > 110, `homebody went for the nearest task ${toward}/200 times`);
+  assert.ok(toward > 60 && toward < 160, `homebody went for the nearest task ${toward}/200 times`);
 });
 
 await test("Shade bots fake tasks to blend in — never the witnessed lamp", async () => {
@@ -214,6 +214,24 @@ await test("cunning sets how eagerly Shade bots strike and call the fog", async 
   assert.ok(count(() => chooseRelight("keeper", "normal")) > count(() => chooseRelight("shade", "normal")),
     "Keepers rush to the lamp; Shades only sometimes relight it for cover");
   assert.equal(count(() => chooseRelight("shade", "easy")), 0);
+});
+
+await test("once a bot sets off for a task, it sees it through; wisps always work", async () => {
+  for (let i = 0; i < 200; i++) {
+    const b = newBrain(0);
+    b.personality = "social";
+    b.goal = "lighthouse";
+    observe(b, "chapel", ["a", "b", "c", "d"], 900); // a crowd that would otherwise pull it away
+    const d = decide(b, "market", "keeper", [], 1000, ["lighthouse"]);
+    assert.equal(d.to, route("market", "lighthouse")[0], "keeps walking toward the Lighthouse");
+    assert.equal(b.goal, "lighthouse");
+  }
+  for (let i = 0; i < 200; i++) {
+    const w = newBrain(0);
+    w.personality = "social";
+    const d = decide(w, "chapel", "keeper", [], 1000, ["lighthouse"], true);
+    assert.ok(["market", "netloft"].includes(d.to), `a focused wisp heads for its task, got ${d.to}`);
+  }
 });
 
 done("bots");

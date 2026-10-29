@@ -104,6 +104,7 @@
 
   <!-- In game (the harbor map arrives in step 3) -->
   <main id="game" class="screen" hidden>
+   <div class="game-main">
     <header class="game-head">
       <div>
         <p class="eyebrow">Room <span id="game-code"></span></p>
@@ -131,6 +132,8 @@
       <div id="map" class="map-wrap"></div>
       <p id="move-hint" class="muted small center move-hint">Tap a glowing place to walk there.</p>
     </section>
+   </div>
+   <div class="game-side">
 
     <section class="here card">
       <div class="here-head">
@@ -160,6 +163,7 @@
       <button id="end-game" class="ghost wide">Back to lobby (host)</button>
     </div>
     <button id="game-leave" class="link">Leave room</button>
+   </div>
   </main>
 
   <!-- Everyone gathers at the bell: discuss, vote, verdict -->

@@ -95,7 +95,7 @@ export function crowdSVG({ here, flame, company = [], shapes = 0, fog = false, s
     if (c.shape) return `<g transform="translate(${p.x + dx} ${p.y + dy})" class="mini shape"><ellipse cy="-2" rx="5" ry="9" fill="#0c0f18" opacity=".85"/><circle cy="-10" r="3.5" fill="#0c0f18" opacity=".85"/></g>`;
     return miniLantern(p.x + dx, p.y + dy, LANTERN_FLAMES[c.lantern] ?? "#ffb347", { wisp: c.wisp });
   }).join("");
-  if (self) out += miniLantern(p.x, p.y + 15, flame, { wisp: self.wisp, scale: 1.15 });
+  if (self) out += miniLantern(p.x, p.y + 5, flame, { wisp: self.wisp, scale: 1.15 });
   return out;
 }
 

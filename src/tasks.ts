@@ -16,15 +16,15 @@ export interface TaskDef {
 }
 
 export const TASKS: Record<Loc, TaskDef> = {
-  lighthouse: { loc: "lighthouse", name: "Light the great lamp", kind: "timing", minMs: 2500, witnessed: true, botWorkMs: [6000, 9000] },
-  chapel: { loc: "chapel", name: "Light the candles", kind: "sequence", minMs: 3000, witnessed: false, botWorkMs: [6000, 9000] },
-  market: { loc: "market", name: "Sort the signal flags", kind: "match", minMs: 1500, witnessed: false, botWorkMs: [4000, 7000] },
-  netloft: { loc: "netloft", name: "Mend the net", kind: "connect", minMs: 2500, witnessed: false, botWorkMs: [5000, 8000] },
-  dock: { loc: "dock", name: "Haul in the rope", kind: "mash", minMs: 2000, witnessed: false, botWorkMs: [4000, 7000] },
-  clocktower: { loc: "clocktower", name: "Wind the clock", kind: "hold", minMs: 3000, witnessed: false, botWorkMs: [4000, 6000] },
+  lighthouse: { loc: "lighthouse", name: "Light the great lamp", kind: "timing", minMs: 2500, witnessed: true, botWorkMs: [12000, 16000] },
+  chapel: { loc: "chapel", name: "Light the candles", kind: "sequence", minMs: 3000, witnessed: false, botWorkMs: [11000, 15000] },
+  market: { loc: "market", name: "Sort the signal flags", kind: "match", minMs: 1500, witnessed: false, botWorkMs: [8000, 12000] },
+  netloft: { loc: "netloft", name: "Mend the net", kind: "connect", minMs: 2500, witnessed: false, botWorkMs: [10000, 14000] },
+  dock: { loc: "dock", name: "Haul in the rope", kind: "mash", minMs: 2000, witnessed: false, botWorkMs: [8000, 12000] },
+  clocktower: { loc: "clocktower", name: "Wind the clock", kind: "hold", minMs: 3000, witnessed: false, botWorkMs: [8000, 11000] },
 };
 
-export const TASKS_PER_PLAYER = 4;
+export const TASKS_PER_PLAYER = 5;
 
 export interface Task {
   id: string;

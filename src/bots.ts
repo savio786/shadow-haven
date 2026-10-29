@@ -17,7 +17,7 @@ export interface Sighting {
 
 /** Something a bot saw that matters when the harbor gathers to talk. */
 export interface Evidence {
-  kind: "sawSnuff" | "nearCold" | "lamp";
+  kind: "sawSnuff" | "nearCold" | "lastWith" | "lamp";
   who: string;        // the player it points at (or vouches for, for "lamp")
   victim?: string;
   loc: Loc;
@@ -79,7 +79,21 @@ export function foundCold(brain: Brain, loc: Loc, victim: string, now: number, s
     for (const id of s.ids) if (id !== victim && id !== self) near.add(id);
   }
   for (const who of near) remember(brain, { kind: "nearCold", who, victim, loc, at: now });
+
+  // Who did it last see alone with the victim? That's the sharpest clue a bot can have.
+  for (let i = brain.memory.length - 1; i >= 0; i--) {
+    const s = brain.memory[i];
+    if (now - s.at > LAST_WITH_MS) break;
+    if (!s.ids.includes(victim)) continue;
+    const others = s.ids.filter((id) => id !== victim && id !== self);
+    if (others.length === 1) {
+      remember(brain, { kind: "lastWith", who: others[0], victim, loc: s.loc, at: s.at });
+      break;
+    }
+  }
 }
+
+const LAST_WITH_MS = 60_000;
 
 /**
  * Should a Shade bot snuff someone here? Only when exactly one Keeper is in
@@ -96,7 +110,7 @@ const SNUFF_CHANCE: Record<BotLevel, number> = { easy: 0.45, normal: 0.85, cunni
 
 /** Each turn, how likely a Shade bot is to call the fog when it can. */
 export function chooseFog(level: BotLevel): boolean {
-  return rand() < ({ easy: 0, normal: 0.08, cunning: 0.2 } as const)[level];
+  return rand() < ({ easy: 0, normal: 0.1, cunning: 0.3 } as const)[level];
 }
 
 /** In the fog, will this bot head for the lamp (Keepers) — or relight it for cover (Shades)? */
@@ -113,7 +127,9 @@ export function chooseReport(role: Role, snuffedItItself: boolean): boolean {
 }
 
 /** How keen each personality is to get on with its tasks. */
-const DILIGENCE: Record<Personality, number> = { homebody: 0.75, watcher: 0.65, wanderer: 0.55, social: 0.5 };
+// Kept well below 1: real people dawdle, chat and look around between tasks, and
+// that's what gives the Shades their chances (and the Keepers their alibis).
+const DILIGENCE: Record<Personality, number> = { homebody: 0.45, watcher: 0.4, wanderer: 0.35, social: 0.3 };
 
 /** Remember that this player was seen doing something only a Keeper can do. */
 export function vouch(brain: Brain, id: string) {
@@ -150,7 +166,7 @@ export interface Decision {
  * @param allies other Shades (only meaningful when the bot is a Shade)
  * @param todo   places where the bot still has a task (a Shade's are fake)
  */
-export function decide(brain: Brain, here: Loc, role: Role, allies: string[], now: number, todo: Loc[] = []): Decision {
+export function decide(brain: Brain, here: Loc, role: Role, allies: string[], now: number, todo: Loc[] = [], focused = false): Decision {
   const step = (goal: Loc | null): Loc | null => {
     brain.goal = goal && goal !== here ? goal : null;
     return brain.goal ? route(here, brain.goal)[0] ?? null : null;
@@ -181,7 +197,12 @@ export function decide(brain: Brain, here: Loc, role: Role, allies: string[], no
   } else if (todo.length) {
     // Keepers get on with their tasks, more or less keenly.
     if (todo.includes(here)) return workHere();
-    if (rand() < DILIGENCE[brain.personality]) {
+    // Once on the way to a task, see it through (no pacing back and forth).
+    if (brain.goal && todo.includes(brain.goal)) {
+      return { to: step(brain.goal), dwellMs: between(1800, 3000) };
+    }
+    // Wisps have nothing better to do than their tasks.
+    if (focused || rand() < DILIGENCE[brain.personality]) {
       return { to: step(brain.goal && todo.includes(brain.goal) ? brain.goal : nearest(todo)), dwellMs: between(1800, 3000) };
     }
   }

@@ -18,6 +18,13 @@
   // daily allowance is used up) bots fall back to evidence-based lines.
   "ai": { "binding": "AI" },
 
+  // Per-address limits (approximate, per Cloudflare location): creating rooms,
+  // and connecting to / looking up rooms (which also slows down code guessing).
+  "ratelimits": [
+    { "name": "CREATE_LIMIT", "namespace_id": "8101", "simple": { "limit": 12, "period": 60 } },
+    { "name": "CONNECT_LIMIT", "namespace_id": "8102", "simple": { "limit": 90, "period": 60 } }
+  ],
+
   // One Durable Object instance per game room, addressed by room code.
   "durable_objects": {
     "bindings": [{ "name": "ROOMS", "class_name": "Room" }]

@@ -504,7 +504,9 @@ body.is-shade .chat .line.mine p { background: #261e3a; border-color: #4b3a78; }
 .typing { margin: 0 4px; font-style: italic; color: var(--muted); font-size: .85rem; }
 .typing::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.2s steps(4) infinite; }
 @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
-.quick { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.quick { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; overscroll-behavior-x: contain;
+  -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); mask-image: linear-gradient(90deg, #000 85%, transparent); }
+.quick .chip:last-child { margin-right: 28px; }
 .chip { flex: none; padding: 6px 12px; font-size: .82rem; border-radius: 999px; background: #1a2135; border-color: #2f3a5a; white-space: nowrap; }
 .chip:hover { border-color: var(--flame); }
 .chat-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
@@ -744,3 +746,22 @@ body.is-shade button.fog-btn:not(:disabled) { border-color: #9b7bff; color: #e3d
 /* On the end screen the action bar owns the bottom edge. */
 .mute:hover { opacity: 1; }
 .hero .tag { font-family: var(--serif); }
+
+.banner-retry { margin-left: 8px; padding: 3px 12px; font-size: .82rem; background: transparent; border-color: var(--flame); color: var(--flame); }
+
+/* ---------- Wide screens: use the room ---------- */
+.game-main, .game-side { display: contents; }
+@media (min-width: 1000px) {
+  #game.screen { max-width: 1180px; display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(340px, 1fr); gap: 28px; align-items: start; }
+  #game .game-main, #game .game-side { display: block; min-width: 0; }
+  #game .game-side { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; padding-top: 74px; scrollbar-width: thin; }
+  #game .move-hint { margin-bottom: 0; }
+
+  .meeting.screen { max-width: 760px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 28px; align-items: start; }
+  .meeting.screen > * { grid-column: 1 / -1; }
+  /* While voting, the ballot and the talk sit side by side. */
+  .meeting.screen:has(#vote-wrap:not([hidden])) { max-width: 1000px; }
+  .meeting.screen:has(#vote-wrap:not([hidden])) > #vote-wrap { grid-column: 1; }
+  .meeting.screen:has(#vote-wrap:not([hidden])) > #chat-wrap { grid-column: 2; margin-top: 0; }
+  .meeting .chat { max-height: min(58vh, 520px); }
+}

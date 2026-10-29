@@ -90,12 +90,12 @@ const closeAll = (cs) => cs.forEach((c) => c.close());
 
 console.log("Shadow Haven task tests");
 
-await test("everyone gets 4 tasks in 4 different places, privately", async () => {
+await test("everyone gets 5 tasks in 5 different places, privately", async () => {
   const { clients } = await dealUntil(3, 1, () => true);
   for (const c of clients) {
     const ts = tasksOf(c);
-    assert.equal(ts.length, 4);
-    assert.equal(new Set(ts.map((t) => t.loc)).size, 4);
+    assert.equal(ts.length, 5);
+    assert.equal(new Set(ts.map((t) => t.loc)).size, 5);
     assert.ok(ts.every((t) => !t.done && t.name));
     assert.equal(c.msgs.filter((m) => m.t === "tasks").length >= 1, true);
   }
@@ -167,7 +167,7 @@ await test("a Keeper's task lights the harbor; a Shade's fake doesn't", async ()
   const kr = await doTask(keeper, kTask);
   assert.equal(kr.ok, true);
   const l = await keeper.lobbyWhere((m) => m.progress > 0);
-  assert.equal(l.progress, 1 / 12, "1 of 3 Keepers × 4 tasks");
+  assert.equal(l.progress, 1 / 15, "1 of 3 Keepers × 5 tasks");
   closeAll(clients);
 });
 

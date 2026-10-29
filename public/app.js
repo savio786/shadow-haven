@@ -61,9 +61,17 @@ function show(screen) {
   document.body.dataset.screen = screen;
 }
 
-function banner(text) {
-  $("banner").textContent = text || "";
-  $("banner").hidden = !text;
+function banner(text, withRetry = false) {
+  const el = $("banner");
+  el.textContent = text || "";
+  if (text && withRetry) {
+    const b = document.createElement("button");
+    b.className = "banner-retry";
+    b.textContent = "Retry now";
+    b.addEventListener("click", () => { retry = Math.max(retry, 1); connect(); });
+    el.append(" ", b);
+  }
+  el.hidden = !text;
 }
 
 let toastTimer;
@@ -143,6 +151,7 @@ function initHome() {
     const res = await fetch(`/api/room/${code}`).catch(() => null);
     if (!res) return homeError("Can't reach the harbor. Check your connection.");
     if (res.status === 404) return homeError(`No room called ${code}. Check the code with your host.`);
+    if (res.status === 429) return homeError("Lots of activity from your network — wait a moment and try again.");
     enterRoom(code);
   });
 }
@@ -171,22 +180,41 @@ function enterRoom(code) {
   connect();
 }
 
+const HEARTBEAT_MS = 20_000;   // how often we check the line is alive
+const PONG_WITHIN = 8_000;     // no answer by then → treat the connection as dead
+let lastPong = 0;
+let wasConnected = false;
+
 function connect() {
   clearTimeout(retryTimer);
+  if (ws && ws.readyState <= 1) { try { ws.close(); } catch {} }
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const sock = new WebSocket(`${proto}://${location.host}/api/room/${roomCode}/ws`);
   ws = sock;
 
   sock.addEventListener("open", () => {
+    const recovered = retry > 0 && wasConnected;
     retry = 0;
+    wasConnected = true;
     banner("");
     const { playerId, token } = identity();
     sock.send(JSON.stringify({ t: "join", playerId, token, name: store.get("sh.name") || "Keeper" }));
+    if (recovered) toast("Back in the harbor.");
+    // Heartbeat: a ping the server answers without waking the room. No pong → the line is dead.
+    lastPong = Date.now();
     clearInterval(pingTimer);
-    pingTimer = setInterval(() => sock.readyState === 1 && sock.send("ping"), 30_000);
+    pingTimer = setInterval(() => {
+      if (sock !== ws || sock.readyState !== 1) return;
+      if (Date.now() - lastPong > HEARTBEAT_MS + PONG_WITHIN) {
+        try { sock.close(4100, "heartbeat lost"); } catch {}
+        return;
+      }
+      sock.send("ping");
+    }, HEARTBEAT_MS);
   });
 
   sock.addEventListener("message", (e) => {
+    lastPong = Date.now(); // any message proves the line is alive
     if (e.data === "pong") return;
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
@@ -205,11 +233,39 @@ function connect() {
       return backHome(`Room ${roomCode} has closed.`);
     }
     retry++;
-    const wait = Math.min(10_000, 500 * 2 ** retry);
-    banner("Lost the signal — reconnecting…");
+    const wait = info?.status === 429 ? 15_000 : Math.min(10_000, 500 * 2 ** retry);
+    const why = !navigator.onLine ? "You're offline — we'll reconnect as soon as you're back."
+      : info?.status === 429 ? "Lots of activity on your network — reconnecting shortly…"
+      : retry > 5 ? "Still trying to reach the harbor…"
+      : "Lost the signal — reconnecting…";
+    banner(why, true);
     retryTimer = setTimeout(connect, wait);
   });
 }
+
+/** Come straight back when the phone wakes up or the network returns. */
+function reconnectNow() {
+  if (!roomCode || leaving) return;
+  if (ws && ws.readyState === 1) {
+    // The tab may have slept or the network blinked: prove the line is alive, or reconnect.
+    const sock = ws;
+    if (Date.now() - lastPong > HEARTBEAT_MS + PONG_WITHIN) { try { sock.close(4100, "stale"); } catch {} return; }
+    banner("");
+    const sent = Date.now();
+    try { sock.send("ping"); } catch {}
+    setTimeout(() => {
+      if (sock === ws && sock.readyState === 1 && lastPong < sent) { try { sock.close(4100, "no answer"); } catch {} }
+    }, PONG_WITHIN);
+    return;
+  }
+  if (ws && ws.readyState === 0) return; // already connecting
+  retry = Math.max(retry, 1);
+  connect();
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reconnectNow(); });
+window.addEventListener("online", reconnectNow);
+window.addEventListener("offline", () => roomCode && banner("You're offline — we'll reconnect as soon as you're back.", true));
+
 
 function send(msg) {
   if (ws?.readyState === 1) ws.send(JSON.stringify(msg));

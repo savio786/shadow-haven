@@ -88,9 +88,9 @@ export const REVEAL_MS = 7000;
 export const MOVE_COOLDOWN_MS = 1500;
 
 /** A Shade can't snuff until this long into play (and after each gathering)… */
-export const FIRST_SNUFF_MS = 15_000;
+export const FIRST_SNUFF_MS = 20_000;
 /** …and then has to wait this long between snuffs. */
-export const SNUFF_COOLDOWN_MS = 25_000;
+export const SNUFF_COOLDOWN_MS = 30_000;
 
 /** The Shades' fog: Keepers can't make out faces until it lifts or the lamp is relit. */
 export const FOG_FIRST_MS = 30_000;    // not in the first 30s of play (or after a meeting)

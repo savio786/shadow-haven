@@ -178,4 +178,23 @@ await test("bot cunning changes how bots talk and vote", async () => {
   }
 });
 
+await test("the last person seen alone with the victim is a strong lead", async () => {
+  const c = ctx({ setup: (b) => {
+    observe(b, "dock", ["x", "w", "m"], 90_000);  // victim with two others: not alone
+    observe(b, "chapel", ["x", "f"], 95_000);     // victim alone with Fennel — the latest
+    observe(b, "market", ["w"], 97_000);
+    M; // (minds doesn't record evidence; bots do)
+  } });
+  // foundCold lives in the bot brain module.
+  const { foundCold } = await import(out + "bots2.js");
+  foundCold(c.brain, "netloft", "x", 100_000, "b");
+  const ev = c.brain.evidence.find((e) => e.kind === "lastWith");
+  assert.deepEqual([ev.who, ev.victim, ev.loc], ["f", "x", "chapel"]);
+  assert.match(M.knowledge(c).join(" "), /alone with Fennel at the Chapel/);
+  assert.equal(M.chooseVote(c, null), "f", "a Normal Keeper bot votes on it");
+  const line = M.fallbackLine(c);
+  assert.match(line.say, /Fennel/);
+  assert.equal(line.suspect, "f");
+});
+
 done("minds");

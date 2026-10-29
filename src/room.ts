@@ -41,6 +41,7 @@ interface Player {
   adrift?: boolean;              // set adrift by vote
   bellUsed?: boolean;            // rang the emergency bell this game
   lastSaidAt?: number;
+  lastSaid?: string;
   stats?: PlayerStats;           // this game only
   snuffedAt?: Loc | null;
   snuffReadyAt: number;          // Shades: can't snuff again before this
@@ -102,6 +103,7 @@ interface SocketInfo {
   pid: string | null; // set after a successful "join"
   win: number;        // rate-limit window start (ms)
   n: number;          // messages in window
+  opened?: number;    // when the socket connected (unjoined sockets are closed after a while)
 }
 
 const EMPTY_ROOM_TTL = 10 * 60_000;   // delete a room nobody is connected to
@@ -110,6 +112,9 @@ const HOST_HANDOVER = 60_000;         // pass host on if the host is gone this l
 const SAVE_EVERY = 10_000;            // during play, persist at most this often
 const MAX_MSG_BYTES = 2048;
 const MAX_MSGS_PER_SEC = 20;
+const MAX_SOCKETS = 40;               // per room: 10 players plus spare tabs and reconnects
+const JOIN_WITHIN = 20_000;           // a socket that hasn't joined by then is closed
+const AI_CALLS_PER_MEETING = 16;      // beyond this, bots speak from their evidence (cost cap)
 
 const MEETING_CHAT_KEEP = 60;
 const MAX_BOT_REPLIES = 2;   // per bot per meeting, when someone speaks to it
@@ -122,10 +127,14 @@ export class Room extends DurableObject<Env> {
   private lastSaveAt = 0;
   // Meeting bookkeeping that doesn't need to survive a restart.
   private botTurns: BotTurn[] = [];
+  private healCheckedAt = 0;
   private botVotes: { id: string; at: number }[] = [];
   private hunches = new Map<string, string | null>();
   private replies = new Map<string, number>();
   private aiGate = new AiGate();
+  private aiCalls = 0;  // this meeting
+  // Counters for the performance and cost check (only reported when DEBUG_STATS is on).
+  private meter = { saves: 0, alarms: 0, sends: 0, bytes: 0, botLines: 0, ai: 0, aiFallback: 0, tales: 0 };
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -133,6 +142,7 @@ export class Room extends DurableObject<Env> {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     ctx.blockConcurrencyWhile(async () => {
       const saved = await ctx.storage.get<RoomState>("state");
+      if (env.DEBUG_STATS === "on") Object.assign(this.meter, await ctx.storage.get("meter"));
       // Fill in any fields added since the room was saved.
       this.state = { ...emptyRoom(), ...saved };
       this.state.players = this.state.players.map((p) => ({
@@ -164,10 +174,15 @@ export class Room extends DurableObject<Env> {
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
         return new Response("Expected a WebSocket", { status: 426 });
       }
+      if (this.ctx.getWebSockets().length >= MAX_SOCKETS) {
+        return Response.json({ error: "busy", text: "This room has too many connections right now." }, { status: 503 });
+      }
       const pair = new WebSocketPair();
       const [client, server] = [pair[0], pair[1]];
       this.ctx.acceptWebSocket(server);
-      server.serializeAttachment({ pid: null, win: Date.now(), n: 0 } satisfies SocketInfo);
+      const now = Date.now();
+      server.serializeAttachment({ pid: null, win: now, n: 0, opened: now } satisfies SocketInfo);
+      await this.scheduleAlarm(); // so a socket that never joins gets closed
       return new Response(null, { status: 101, webSocket: client });
     }
 
@@ -178,6 +193,16 @@ export class Room extends DurableObject<Env> {
         players: this.state.players.length,
         max: MAX_PLAYERS,
         full: this.state.players.length >= MAX_PLAYERS,
+        ...(this.env.DEBUG_STATS === "on"
+          ? {
+              meter: { ...this.meter, stateBytes: JSON.stringify(this.state).length },
+              bots: this.state.players.filter((p) => p.isBot).map((p) => ({
+                name: p.name, role: p.role, alive: p.alive, loc: p.loc, personality: p.brain?.personality,
+                todo: p.tasks.filter((t) => !t.done).map((t) => t.loc), working: p.working?.loc ?? null,
+                goal: p.brain?.goal ?? null, nextIn: p.brain ? p.brain.nextMoveAt - Date.now() : null,
+              })),
+            }
+          : {}),
       });
     }
 
@@ -203,6 +228,12 @@ export class Room extends DurableObject<Env> {
     let msg: ClientMsg;
     try { msg = JSON.parse(raw); } catch {
       return this.send(ws, { t: "error", code: "bad_message", text: "Not JSON." });
+    }
+
+    // Self-heal: a game in progress must always have its heartbeat set.
+    if (this.state.phase !== "lobby" && now - this.healCheckedAt > 15_000) {
+      this.healCheckedAt = now;
+      if ((await this.ctx.storage.getAlarm()) === null) await this.scheduleAlarm();
     }
 
     if (msg.t === "ping") return this.send(ws, { t: "pong" });
@@ -249,9 +280,18 @@ export class Room extends DurableObject<Env> {
    * players who dropped, hands over host, saves, and deletes empty rooms.
    */
   async alarm() {
+    this.meter.alarms++;
     const now = Date.now();
     const s = this.state;
     let lobbyChanged = false;
+
+    // Close connections that never joined.
+    for (const ws of this.ctx.getWebSockets()) {
+      const info = ws.deserializeAttachment() as SocketInfo;
+      if (!info.pid && info.opened && now - info.opened > JOIN_WITHIN) {
+        try { ws.close(4002, "join timeout"); } catch {}
+      }
+    }
 
     if (s.phase === "reveal" && s.revealEndsAt && now >= s.revealEndsAt) {
       s.phase = "playing";
@@ -681,7 +721,7 @@ export class Room extends DurableObject<Env> {
       // Wisps keep working (a Keeper's tasks still count) but can't hunt.
       const role: Role = bot.alive ? bot.role : "keeper";
       const todo = bot.alive || bot.role === "keeper" ? bot.tasks.filter((t) => !t.done).map((t) => t.loc) : [];
-      const choice = decide(bot.brain, bot.loc, role, bot.alive ? allies : [], now, todo);
+      const choice = decide(bot.brain, bot.loc, role, bot.alive ? allies : [], now, todo, !bot.alive);
       if (choice.work) bot.working = { loc: choice.work, until: now + choice.dwellMs };
       else if (choice.to && adjacent(bot.loc, choice.to) && now >= bot.readyAt) this.moveTo(bot, choice.to, now);
       bot.brain.nextMoveAt = now + Math.max(choice.dwellMs, MOVE_COOLDOWN_MS);
@@ -856,9 +896,10 @@ export class Room extends DurableObject<Env> {
     this.logEvent(kind === "bell"
       ? { kind: "bell", who: reporter.id, loc }
       : { kind: "report", who: reporter.id, loc, found: s.meeting.found });
-    // Bots that find out now who was found note who they saw nearby.
+    // Every bot now learns whose lanterns were found, and checks its own memory:
+    // who was near that spot, and who was it that it last saw alone with the victim?
     for (const c of s.cold.filter((c) => c.loc === loc)) {
-      for (const p of s.players) if (p.brain && p.alive && p.loc === loc) foundCold(p.brain, c.loc, c.victim, now, p.id);
+      for (const p of s.players) if (p.brain && p.alive) foundCold(p.brain, c.loc, c.victim, now, p.id);
     }
     s.cold = []; // the harbor is tidied while everyone talks
     for (const p of s.players) {
@@ -871,6 +912,7 @@ export class Room extends DurableObject<Env> {
     this.botVotes = [];
     this.hunches.clear();
     this.replies.clear();
+    this.aiCalls = 0;
     this.dirty = true;
     this.refresh([START], now);
   }
@@ -951,7 +993,11 @@ export class Room extends DurableObject<Env> {
     this.broadcast({ t: "typing", who: bot.id });
     const ctx = this.mindFor(bot, turn.replyTo);
     const model = this.env.AI_MODEL || DEFAULT_MODEL;
-    speak(this.env.AI, model, ctx, this.aiGate).then(async (voice) => {
+    const ai = this.aiCalls++ < AI_CALLS_PER_MEETING ? this.env.AI : undefined;
+    this.meter.botLines++; // each one is an AI call in production (up to the per-meeting cap)
+    if (ai) this.meter.ai++;
+    speak(ai, model, ctx, this.aiGate).then(async (voice) => {
+      if (voice.source === "fallback") this.meter.aiFallback++;
       const live = this.state.meeting;
       if (!live || live !== m || (live.stage !== "discuss" && live.stage !== "vote") || !bot.alive) return;
       if (voice.suspect) this.hunches.set(bot.id, voice.suspect);
@@ -999,7 +1045,11 @@ export class Room extends DurableObject<Env> {
     }
     const text = String(raw ?? "").replace(/[\u0000-\u001f\u007f<>]/g, "").replace(/\s+/g, " ").trim().slice(0, CHAT_MAX);
     if (!text) return;
+    if (me.lastSaid && me.lastSaid.toLowerCase() === text.toLowerCase() && now - (me.lastSaidAt ?? 0) < 15_000) {
+      return this.send(ws, { t: "error", code: "repeat", text: "You just said that." });
+    }
     me.lastSaidAt = now;
+    me.lastSaid = text;
     const line = { id: this.state.chatSeq + 1, who: me.id, text, at: now };
     this.pushChat(me.id, text);
     // Speak to a bot by name and it will answer.
@@ -1238,6 +1288,7 @@ export class Room extends DurableObject<Env> {
   private tellTale(result: GameResult, names: Record<string, string>) {
     const input = { players: result.players, names, log: result.log, reason: result.reason, winner: result.winner };
     const { system, user } = talePrompt(taleFacts(input));
+    this.meter.tales++;
     write(this.env.AI, this.env.AI_MODEL || DEFAULT_MODEL, system, user, cleanTale).then(async (text) => {
       if (this.state.result !== result) return; // a new game has begun
       result.tale = text ?? fallbackTale(input);
@@ -1391,16 +1442,24 @@ export class Room extends DurableObject<Env> {
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === ignore) continue;
       if (!(ws.deserializeAttachment() as SocketInfo).pid) continue;
-      try { ws.send(data); } catch {}
+      try { ws.send(data); this.meter.sends++; this.meter.bytes += data.length; } catch {}
     }
   }
 
   private send(ws: WebSocket, msg: ServerMsg) {
-    try { ws.send(JSON.stringify(msg)); } catch {}
+    try {
+      const data = JSON.stringify(msg);
+      ws.send(data);
+      this.meter.sends++;
+      this.meter.bytes += data.length;
+    } catch {}
   }
 
   private async save() {
-    await this.ctx.storage.put("state", this.state);
+    this.meter.saves++;
+    // In debug runs the counters ride along, so they survive the room sleeping.
+    if (this.env.DEBUG_STATS === "on") await this.ctx.storage.put({ state: this.state, meter: this.meter });
+    else await this.ctx.storage.put("state", this.state);
     this.dirty = false;
     this.lastSaveAt = Date.now();
   }
@@ -1427,6 +1486,10 @@ export class Room extends DurableObject<Env> {
       }
     }
     if (!this.anyHumanHere()) times.push(this.lastHumanSeen() + EMPTY_ROOM_TTL);
+    for (const ws of this.ctx.getWebSockets()) {
+      const info = ws.deserializeAttachment() as SocketInfo;
+      if (!info.pid && info.opened) times.push(info.opened + JOIN_WITHIN + 100);
+    }
 
     if (!times.length) return;
     const next = Math.max(now + 50, Math.min(...times));

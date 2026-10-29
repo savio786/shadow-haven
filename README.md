@@ -29,7 +29,7 @@ public/harbor.js original harbor map art
 public/tasks.js  the six task mini-games
 public/lanterns.js  also: cold lanterns, wisps, the Harbor Bell, the drifting boat
 public/sound.js  synthesized sounds (Web Audio) and phone haptics, with mute
-test/            unit tests (bot brains, bot minds, chronicle) + end-to-end tests (lobby, roles, harbor, tasks, snuff, meetings, end)
+test/            unit tests (bot brains, bot minds, chronicle) + end-to-end tests (lobby, roles, harbor, tasks, snuff, meetings, fog, end, hardening) + a soak test
 wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 ```
 
@@ -39,8 +39,10 @@ wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 npm install
 npm run dev        # http://localhost:8787 (needs `npx wrangler login` for the AI)
 npm run dev:local  # fully offline; bots use their fallback lines
+npm run dev:test   # offline, with rate limits off and cost counters on (for the tests)
 npm run check      # typecheck + dry-run build
-npm test           # end-to-end tests (needs `npm run dev` running in another terminal)
+npm test           # unit + end-to-end tests (needs `npm run dev:test` in another terminal)
+npm run test:soak  # two whole 10-player games, with what they cost to run (~15 min)
 ```
 
 ## Bots
@@ -58,7 +60,7 @@ fallback if the daily AI allowance runs out.
 
 ## Tasks
 
-Every player gets four tasks in four different places, each a short mini-game:
+Every player gets five tasks in five different places, each a short mini-game:
 
 | Place | Task | Mini-game |
 |---|---|---|
@@ -82,7 +84,7 @@ When every Keeper task is done, the Keepers win.
 ## Snuffing, wisps and the Harbor Bell
 
 A Shade can snuff the lantern of a Keeper in the same place (not in the first
-15 seconds, then once every 25 seconds). Anyone else alive there sees it happen.
+20 seconds, then once every 30 seconds). Anyone else alive there sees it happen.
 The snuffed Keeper becomes a **wisp**: the living can't see them, but their
 tasks still light the harbor.
 
@@ -162,6 +164,66 @@ offers a way back into a game in progress.
   drifting fog, everyone you can see gathered around you), Fraunces and Inter
   type, and a softly drifting fog behind every screen.
 
+## Hardening (step 9)
+
+- **Reconnects.** The page sends a tiny heartbeat every 20s. Cloudflare answers
+  it without waking the room, so idle players cost nothing. If no answer comes,
+  the page reconnects by itself, with backoff. It also comes straight back when
+  a phone wakes up or the network returns. A banner says what's happening, with
+  a **Retry now** button, and "Back in the harbor." confirms it. A reload or
+  reconnect mid-game puts you right back with your role, tasks and place. A room
+  whose timer is ever lost restarts it the next time anyone acts.
+- **Abuse limits.** Per IP address, using Cloudflare's Rate Limiting binding:
+  12 new rooms a minute and 90 room connections a minute. Per room: at most 40
+  sockets, and sockets that don't join within 20s are closed. Per player:
+  20 messages a second, 2 KB per message, 140 characters per chat line, one
+  line per 1.2s, and no repeating yourself within 15s.
+  The AI is capped at 16 bot lines per meeting, and pauses for 60s after an
+  error, falling back to rule-based lines.
+- **Prompt-injection guard.** Player chat goes to the AI wrapped as quoted
+  speech, with instructions to ignore any orders inside it. A bot's reply is
+  parsed as JSON and cleaned, and a Shade bot can never name its partner.
+- **Security headers** (`public/_headers`): a strict Content-Security-Policy
+  (scripts only from this site, sockets only to this site), no framing,
+  `nosniff`, a locked-down Permissions-Policy. The page is never cached stale;
+  scripts and styles are cached for 5 minutes.
+- **Fuzzing.** `test/hardening.test.mjs` throws every message type with
+  junk values at a room in every phase of a game, then checks the room still
+  works.
+- **Balance.** Soak tests of whole 10-player games found the Shades winning too
+  fast, and later the Keeper bots lighting the harbor in under two minutes.
+  The fixes:
+  - Bots remember who they last saw alone with a victim (a strong clue).
+  - Snuffs come later and less often (20s, then every 30s).
+  - Everyone gets five tasks.
+  - Bots dawdle between tasks like people do.
+  - Bots commit to a task once they set off.
+  - Wisps stay on their tasks.
+
+  Typical games now run about 3 to 7 minutes and end close.
+- **Wide screens.** On a laptop the game shows the map beside your place,
+  people and tasks; the ballot and the talk sit side by side when voting.
+  Every screen was checked at 320px, phone, tablet and desktop for overflow.
+
+### What a game costs to run
+
+Measured with `npm run test:soak` (10 players: 1 person + 9 bots) against the
+free plan's daily allowances:
+
+| Per game (about 4 minutes) | Cunning | Normal | Free allowance per day | Games per day, free |
+|---|---|---|---|---|
+| Room wake-ups (Durable Object requests) | 276 | 238 | 100,000 | ~350 |
+| Room time awake (128 MB) | ~30 GB-s | ~30 GB-s | 13,000 GB-s | ~430 |
+| Storage writes (state saved every 10s at most) | 82 | 77 | 100,000 rows | ~1,200 |
+| Bot lines + the tale (Workers AI, Llama 3.1 8B) | 13 | 17 | 10,000 neurons | ~160 with AI voices |
+| Messages to one player | 182 (198 KB) | 164 (178 KB) | — | — |
+| Saved room state | 60 KB | 49 KB | — | — |
+
+So the free plan comfortably covers a few hundred games a day. When the
+daily AI allowance runs out, bots switch to their rule-based lines and the tale
+to its fallback, so nothing breaks and nothing is charged. Idle players cost
+nothing: heartbeats are answered by Cloudflare without waking the room.
+
 ## Deploying
 
 Pushing to `main` deploys automatically. The workflow needs two repository secrets
@@ -189,4 +251,4 @@ record pointing somewhere else.
 6. ~~Meetings: emergency bell, chat with smart quick lines, voting, verdict, AI-voiced bots that answer and vote on evidence, sound~~
 7. ~~End of the night: who was who, honors, AI-written tale and timeline, share, personal record, play again, welcome back~~
 8. ~~Art pass, the fog, bot cunning (with Auto), XP, ranks and daily streaks~~
-9. Reconnects, host handover, rate limits, tests
+9. ~~Hardening: reconnects, abuse limits, security headers, wide-screen layouts, balance, performance and cost check, full test sweep~~

@@ -32,7 +32,7 @@ await test("catching the Shade: who was who, honors, the log, the tale — then 
   assert.deepEqual([sh.role, sh.fate], ["shade", "adrift"]);
   for (const k of keepers) {
     const p = r.players.find((x) => x.id === k.id.playerId);
-    assert.deepEqual([p.role, p.fate, p.tasksTotal, p.sharpVotes], ["keeper", "survived", 4, 1]);
+    assert.deepEqual([p.role, p.fate, p.tasksTotal, p.sharpVotes], ["keeper", "survived", 5, 1]);
   }
 
   // Honors and the log.
