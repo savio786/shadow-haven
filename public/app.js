@@ -1,6 +1,7 @@
-// Shadow Haven — browser client (step 1: home + lobby).
+// Shadow Haven — browser client.
 import { keeperSVG, shadeSVG, LANTERNS } from "./lanterns.js";
 import { harborSVG, PLACES } from "./harbor.js";
+import { runTask } from "./tasks.js";
 
 const MIN_PLAYERS = 4;
 const REVEAL_MS = 7000;
@@ -31,13 +32,15 @@ let myRole = null;   // "keeper" | "shade" — only ever our own
 let allies = [];     // fellow Shades' ids (only if we're a Shade)
 let view = null;     // { here, neighbors, present, readyAtLocal } — what we can see
 let readyTimer = null;
+let myTasks = [];    // our task list (a Shade's is fake)
+let activeTask = null; // { id, nonce, cleanup } while a mini-game is open
 let retry = 0;
 let retryTimer = null;
 let pingTimer = null;
 let leaving = false;
 
 // ---------- Screens ----------
-const SCREENS = ["home", "lobby", "reveal", "game"];
+const SCREENS = ["home", "lobby", "reveal", "game", "over"];
 function show(screen) {
   for (const s of SCREENS) $(s).hidden = s !== screen;
   document.body.dataset.screen = screen;
@@ -49,8 +52,9 @@ function banner(text) {
 }
 
 let toastTimer;
-function toast(text) {
+function toast(text, kind = "") {
   $("toast").textContent = text;
+  $("toast").className = "toast" + (kind ? " " + kind : "");
   $("toast").hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => ($("toast").hidden = true), 3500);
@@ -173,7 +177,8 @@ function onMessage(msg) {
     case "lobby":
       // Back in the lobby means last game's role is gone. (Roles arrive just
       // before the "reveal" update, so only clear when the room says lobby.)
-      if (msg.phase === "lobby" && lobby?.phase !== "lobby") { myRole = null; allies = []; view = null; }
+      if (msg.phase === "lobby" && lobby?.phase !== "lobby") { myRole = null; allies = []; view = null; myTasks = []; }
+      if (msg.phase !== "playing") closeTask();
       lobby = msg;
       renderPhase();
       break;
@@ -181,6 +186,19 @@ function onMessage(msg) {
       myRole = msg.role;
       allies = msg.allies || [];
       if (lobby && lobby.phase !== "lobby") renderPhase();
+      break;
+    case "tasks":
+      myTasks = msg.tasks;
+      if (lobby?.phase === "playing") { renderHarbor(); renderTasks(); }
+      break;
+    case "taskChallenge":
+      openTask(msg);
+      break;
+    case "taskResult":
+      onTaskResult(msg);
+      break;
+    case "witness":
+      toast(msg.text, "witness");
       break;
     case "view": {
       // Convert the server's "ready at" into our own clock.
@@ -218,6 +236,8 @@ function backHome(error) {
   myRole = null;
   allies = [];
   view = null;
+  myTasks = [];
+  closeTask();
   roomCode = null;
   banner("");
   if (location.pathname !== "/") history.pushState({}, "", "/");
@@ -237,6 +257,9 @@ function renderPhase() {
   } else if (lobby.phase === "playing" && myRole) {
     show("game");
     renderGame();
+  } else if (lobby.phase === "ended" && lobby.result) {
+    show("over");
+    renderOver();
   }
 }
 
@@ -287,9 +310,10 @@ function renderHarbor() {
 
   // Only rebuild the map when it actually looks different, so a tap is never
   // lost to a redraw caused by someone else walking past.
-  const mapKey = [view.here, view.neighbors.join(), canMove, flame].join("|");
+  const todo = myTasks.filter((t) => !t.done).map((t) => t.loc);
+  const mapKey = [view.here, view.neighbors.join(), canMove, flame, todo.join()].join("|");
   if ($("map").dataset.key !== mapKey) {
-    $("map").innerHTML = harborSVG({ here: view.here, neighbors: view.neighbors, canMove, flame });
+    $("map").innerHTML = harborSVG({ here: view.here, neighbors: view.neighbors, canMove, flame, tasks: todo });
     $("map").dataset.key = mapKey;
   }
   $("walking").hidden = canMove;
@@ -301,6 +325,13 @@ function renderHarbor() {
   const nameEl = $("here-name");
   nameEl.textContent = place?.name ?? view.here;
   $("here-text").textContent = place?.text ?? "";
+
+  const taskHere = myTasks.find((t) => t.loc === view.here && !t.done);
+  $("task-here").hidden = !taskHere;
+  if (taskHere) {
+    $("task-here").textContent = taskHere.name;
+    $("task-here").dataset.id = taskHere.id;
+  }
 
   const list = $("here-list");
   list.innerHTML = "";
@@ -336,6 +367,92 @@ function onMapActivate(e) {
   renderHarbor();
 }
 
+// ---------- Tasks ----------
+function renderTasks() {
+  const list = $("task-list");
+  list.innerHTML = "";
+  for (const t of myTasks) {
+    const li = document.createElement("li");
+    li.className = t.done ? "done" : (view && view.here === t.loc ? "here" : "");
+    const name = document.createElement("span");
+    name.textContent = t.name;
+    const where = document.createElement("span");
+    where.className = "muted small";
+    where.textContent = t.done ? "done" : PLACES[t.loc]?.name ?? t.loc;
+    li.append(name, where);
+    list.append(li);
+  }
+  if (myRole === "shade" && myTasks.length) {
+    const note = document.createElement("li");
+    note.className = "fake-note muted small";
+    note.textContent = "Yours are fake: doing them adds nothing, but helps you blend in. Faking the lamp would be seen through.";
+    list.append(note);
+  }
+}
+
+function startTaskHere() {
+  const id = $("task-here").dataset.id;
+  if (id) send({ t: "taskStart", id });
+}
+
+function openTask(msg) {
+  closeTask();
+  $("task-title").textContent = msg.name;
+  $("task-modal").hidden = false;
+  const cleanup = runTask(msg.kind, msg.data, $("task-root"), (answer) => {
+    send({ t: "taskDone", id: msg.id, nonce: msg.nonce, answer });
+  });
+  activeTask = { id: msg.id, nonce: msg.nonce, cleanup };
+}
+
+function closeTask(tellServer = false) {
+  if (!activeTask) return;
+  try { activeTask.cleanup?.(); } catch {}
+  activeTask = null;
+  $("task-modal").hidden = true;
+  $("task-root").innerHTML = "";
+  if (tellServer) send({ t: "taskCancel" });
+}
+
+function onTaskResult(msg) {
+  if (msg.ok) {
+    closeTask();
+    toast(myRole === "shade" ? "Done. Nobody saw through it." : "Task done. The harbor glows a little brighter.");
+    return;
+  }
+  if (activeTask && activeTask.id === msg.id) {
+    closeTask();
+    toast(msg.text || "That didn't work. Try again.");
+  } else if (msg.text) {
+    toast(msg.text);
+  }
+}
+
+// ---------- Game over ----------
+function renderOver() {
+  const r = lobby.result;
+  const keepersWon = r.winner === "keepers";
+  const iWon = (myRole === "shade") !== keepersWon;
+  document.body.classList.toggle("is-shade", !keepersWon);
+  $("over").classList.toggle("shade", !keepersWon);
+  $("over-title").textContent = keepersWon ? "The Keepers win" : "The Shades win";
+  $("over-reason").textContent = r.reason + (myRole ? (iWon ? " You won." : " You lost.") : "");
+  $("over-shades").innerHTML = "";
+  for (const id of r.shades) {
+    const p = lobby.players.find((x) => x.id === id);
+    if (!p) continue;
+    const li = document.createElement("li");
+    li.innerHTML = shadeSVG({ shape: p.shape, size: 44 });
+    const n = document.createElement("span");
+    n.textContent = p.name + (p.id === me ? " (you)" : "");
+    li.append(n);
+    $("over-shades").append(li);
+  }
+  const isHost = lobby.hostId === me;
+  $("over-host").hidden = !isHost;
+  $("over-wait").hidden = isHost;
+}
+
 // ---------- In game ----------
 function renderGame() {
   const isHost = lobby.hostId === me;
@@ -343,6 +460,10 @@ function renderGame() {
   $("game-host").hidden = !isHost;
   document.body.classList.toggle("is-shade", myRole === "shade");
   renderHarbor();
+  renderTasks();
+  const pct = Math.round((lobby.progress ?? 0) * 100);
+  $("lights-fill").style.width = pct + "%";
+  $("lights-label").textContent = `Harbor lights ${pct}%`;
 
   $("game-players").innerHTML = "";
   for (const p of lobby.players) {
@@ -468,6 +589,10 @@ function initLobby() {
   });
   $("peek").addEventListener("click", peek);
   $("map").addEventListener("click", onMapActivate);
+  $("task-here").addEventListener("click", startTaskHere);
+  $("task-close").addEventListener("click", () => closeTask(true));
+  $("task-modal").addEventListener("keydown", (e) => { if (e.key === "Escape") closeTask(true); });
+  $("over-lobby").addEventListener("click", () => send({ t: "endGame" }));
   $("map").addEventListener("keydown", onMapActivate);
   $("copy-link").addEventListener("click", async () => {
     const link = `${location.origin}/r/${roomCode}`;

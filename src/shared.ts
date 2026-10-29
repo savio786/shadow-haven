@@ -30,7 +30,20 @@ export const BOT_NAMES = [
   "Pell", "Quill", "Sorrel", "Juniper", "Oakum",
 ];
 
-export type Phase = "lobby" | "reveal" | "playing";
+export type Phase = "lobby" | "reveal" | "playing" | "ended";
+
+export interface GameResult {
+  winner: "keepers" | "shades";
+  reason: string;
+  shades: string[]; // revealed at the end
+}
+
+export interface PublicTask {
+  id: string;
+  loc: string;
+  name: string;
+  done: boolean;
+}
 export type Role = "keeper" | "shade";
 
 /** How long the private role reveal stays on screen before play begins. */
@@ -63,6 +76,9 @@ export type ClientMsg =
   | { t: "start" }
   | { t: "endGame" }
   | { t: "move"; to: string }
+  | { t: "taskStart"; id: string }
+  | { t: "taskDone"; id: string; nonce: string; answer?: unknown }
+  | { t: "taskCancel" }
   | { t: "leave" }
   | { t: "ping" };
 
@@ -78,11 +94,20 @@ export type ServerMsg =
       max: number;
       shades: number;              // how many Shades this game has / will have
       revealEndsAt: number | null; // epoch ms, during "reveal"
+      progress: number | null;     // 0..1 share of Keeper tasks done, while a game is on
+      result: GameResult | null;   // once the game has ended
     }
   // Sent privately to one player. Never broadcast.
   | { t: "role"; role: Role; allies: string[] }
   // Private: where you are, where you can go, and who is here with you.
   | { t: "view"; here: string; neighbors: string[]; present: string[]; readyAt: number; now: number }
+  // Private: your task list (a Shade's is fake, and looks the same).
+  | { t: "tasks"; tasks: PublicTask[] }
+  // Private: the mini-game for the task you just started.
+  | { t: "taskChallenge"; id: string; nonce: string; kind: string; name: string; data: unknown }
+  | { t: "taskResult"; id: string; ok: boolean; text?: string }
+  // Sent to everyone in a place when something there is plain to see.
+  | { t: "witness"; who: string; loc: string; text: string }
   | { t: "notice"; text: string }
   | { t: "error"; code: string; text: string }
   | { t: "pong" };

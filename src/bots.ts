@@ -5,6 +5,7 @@
 
 import { LOCATIONS, PATHS, route, type Loc } from "./harbor";
 import type { Role } from "./shared";
+import { TASKS } from "./tasks";
 
 export type Personality = "wanderer" | "homebody" | "social" | "watcher";
 
@@ -21,6 +22,7 @@ export interface Brain {
   cameFrom: Loc | null;   // avoid pacing back and forth
   memory: Sighting[];     // newest last, capped
   goal: Loc | null;       // where it's heading, if anywhere
+  vouched: string[];      // players it saw prove themselves (witnessed tasks)
 }
 
 const MEMORY_CAP = 60;
@@ -40,7 +42,16 @@ export function newBrain(now: number): Brain {
     cameFrom: null,
     memory: [],
     goal: null,
+    vouched: [],
   };
+}
+
+/** How keen each personality is to get on with its tasks. */
+const DILIGENCE: Record<Personality, number> = { homebody: 0.75, watcher: 0.65, wanderer: 0.55, social: 0.5 };
+
+/** Remember that this player was seen doing something only a Keeper can do. */
+export function vouch(brain: Brain, id: string) {
+  if (!brain.vouched.includes(id)) brain.vouched.push(id);
 }
 
 /** Record what the bot can see where it stands. */
@@ -65,17 +76,26 @@ export function lastSeen(brain: Brain): Map<string, { loc: Loc; at: number }> {
 export interface Decision {
   to: Loc | null;   // null = stay
   dwellMs: number;  // how long before thinking again
+  work?: Loc;       // spend the dwell time on the task here
 }
 
 /**
  * Decide the bot's next step.
  * @param allies other Shades (only meaningful when the bot is a Shade)
+ * @param todo   places where the bot still has a task (a Shade's are fake)
  */
-export function decide(brain: Brain, here: Loc, role: Role, allies: string[], now: number): Decision {
+export function decide(brain: Brain, here: Loc, role: Role, allies: string[], now: number, todo: Loc[] = []): Decision {
   const step = (goal: Loc | null): Loc | null => {
     brain.goal = goal && goal !== here ? goal : null;
     return brain.goal ? route(here, brain.goal)[0] ?? null : null;
   };
+  const workHere = (): Decision => {
+    const [lo, hi] = TASKS[here].botWorkMs;
+    brain.goal = null;
+    return { to: null, dwellMs: between(lo, hi), work: here };
+  };
+  const nearest = (places: Loc[]) =>
+    places.reduce<Loc | null>((best, l) => (best === null || route(here, l).length < route(here, best).length ? l : best), null);
 
   // --- Shades hunt: head for a Keeper last seen on their own. ---
   if (role === "shade") {
@@ -87,7 +107,17 @@ export function decide(brain: Brain, here: Loc, role: Role, allies: string[], no
       // Found them alone: linger (in step 5 this is where a Shade strikes).
       return { to: null, dwellMs: between(3000, 5000) };
     }
-    // Nobody to hunt: drift like a Keeper so it doesn't stand out.
+    // Nobody to hunt: pretend to work so it doesn't stand out — but never at
+    // the lighthouse, where a fake would be seen through.
+    const cover = todo.filter((l) => !TASKS[l].witnessed);
+    if (cover.includes(here) && rand() < 0.6) return workHere();
+    if (cover.length && rand() < 0.5) return { to: step(nearest(cover)), dwellMs: between(2500, 4000) };
+  } else if (todo.length) {
+    // Keepers get on with their tasks, more or less keenly.
+    if (todo.includes(here)) return workHere();
+    if (rand() < DILIGENCE[brain.personality]) {
+      return { to: step(brain.goal && todo.includes(brain.goal) ? brain.goal : nearest(todo)), dwellMs: between(1800, 3000) };
+    }
   }
 
   switch (brain.personality) {

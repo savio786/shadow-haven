@@ -33,10 +33,10 @@ const ICONS = {
 };
 
 /**
- * @param {{here: string|null, neighbors: string[], canMove: boolean, flame: string}} view
+ * @param {{here: string|null, neighbors: string[], canMove: boolean, flame: string, tasks?: string[]}} view
  */
 export function harborSVG(view) {
-  const { here, neighbors = [], canMove, flame } = view;
+  const { here, neighbors = [], canMove, flame, tasks = [] } = view;
   const paths = PATHS.map(([a, b]) => {
     const A = PLACES[a], B = PLACES[b];
     const live = here && ((a === here && neighbors.includes(b)) || (b === here && neighbors.includes(a)));
@@ -54,6 +54,7 @@ export function harborSVG(view) {
       <circle r="17" class="disc"/>
       <g class="icon">${ICONS[id]}</g>
       ${isHere ? `<circle r="22" class="ring" style="stroke:${flame}"/>` : ""}
+      ${tasks.includes(id) ? `<g class="task-pin" transform="translate(14 -14)"><circle r="6"/><path d="M-2.5 0l1.8 1.8 3.2-3.6"/></g>` : ""}
       <text y="34" class="label">${p.name}</text>
     </g>`;
   }).join("");

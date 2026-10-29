@@ -19,10 +19,12 @@ src/room.ts      the Room Durable Object (one per game): lobby, players, bots
 src/shared.ts    constants and message types shared by server and client
 src/harbor.ts    the harbor's locations and paths, route finding
 src/bots.ts      bot brains: personalities, memory, decisions
+src/tasks.ts     task definitions, challenges and answer checking
 public/app.js    browser client (home + lobby)
 public/lanterns.js  original Lantern Keeper SVG art
 public/harbor.js original harbor map art
-test/            bot brain unit tests + end-to-end tests (lobby, roles, harbor)
+public/tasks.js  the six task mini-games
+test/            bot brain unit tests + end-to-end tests (lobby, roles, harbor, tasks)
 wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 ```
 
@@ -48,6 +50,29 @@ Keepers they last saw alone. In meetings (step 6) the same memory will feed a
 Workers AI language model so bots can argue, accuse and lie, with a rule-based
 fallback if the daily AI allowance runs out.
 
+## Tasks
+
+Every player gets four tasks in four different places, each a short mini-game:
+
+| Place | Task | Mini-game |
+|---|---|---|
+| Lighthouse | Light the great lamp | catch the spark on the wick, 3 times |
+| Chapel | Light the candles | watch the order, repeat it |
+| Market Square | Sort the signal flags | pick the matching flag |
+| Net Loft | Mend the net | tie the knots 1 to 6 |
+| Dock | Haul in the rope | pull, pull, pull |
+| Clock Tower | Wind the clock | hold the crank until it's wound |
+
+The server issues every attempt as a challenge and checks that you're in the
+right place, the answer is right, and you didn't finish faster than a person
+could. Shades get fake tasks that look identical but add nothing.
+
+Lighting the great lamp is **witnessed**: everyone at the Lighthouse sees the
+beam sweep the bay. Only a Keeper's lamp lights, so it's real evidence. Bots
+remember who they saw do it.
+
+When every Keeper task is done, the Keepers win.
+
 ## Deploying
 
 Pushing to `main` deploys automatically. The workflow needs two repository secrets
@@ -70,7 +95,7 @@ record pointing somewhere else.
 1. ~~Rooms and lobby: create/join by code, invite links, live player list, bots~~
 2. ~~Secret roles: fair Shade picking, private reveal, Shade partners, rejoin keeps your role~~
 3. ~~Harbor map: six locations, fog (you only see who's with you), smart bots that roam and hunt~~
-4. Tasks and the shared progress lantern
+4. ~~Tasks: six mini-games, server-checked, witnessed lamp, fake tasks for Shades, bots that work, Keepers' task win~~
 5. Snuffing, cold lanterns and reporting
 6. Meetings: Harbor Bell, chat, voting, setting adrift
 7. Win conditions and play again

@@ -87,6 +87,11 @@
     </header>
     <p id="peek-role" class="peek-role" hidden></p>
 
+    <div class="lights" aria-label="Harbor lights lit">
+      <div class="lights-bar"><span id="lights-fill"></span></div>
+      <span id="lights-label" class="small">Harbor lights 0%</span>
+    </div>
+
     <section class="harbor">
       <div id="map" class="map-wrap"></div>
       <p id="move-hint" class="muted small center move-hint">Tap a glowing place to walk there.</p>
@@ -98,8 +103,14 @@
         <span id="walking" class="walking" hidden>walking…</span>
       </div>
       <p id="here-text" class="muted small"></p>
+      <button id="task-here" class="primary wide" hidden></button>
       <p class="eyebrow">Here with you</p>
       <ul id="here-list" class="here-list"></ul>
+    </section>
+
+    <section class="card task-card">
+      <p class="eyebrow">Your tasks</p>
+      <ul id="task-list" class="task-list"></ul>
     </section>
 
     <details class="roster">
@@ -112,6 +123,30 @@
     </div>
     <button id="game-leave" class="link">Leave room</button>
   </main>
+
+  <!-- Game over -->
+  <main id="over" class="screen over" hidden>
+    <p class="eyebrow center">The night is over</p>
+    <h1 id="over-title"></h1>
+    <p id="over-reason" class="reveal-text"></p>
+    <p class="eyebrow center">The Shades were</p>
+    <ul id="over-shades" class="allies-list"></ul>
+    <div id="over-host" hidden>
+      <button id="over-lobby" class="primary wide">Back to the lobby</button>
+    </div>
+    <p id="over-wait" class="muted center" hidden>Waiting for the host…</p>
+  </main>
+
+  <!-- Task mini-game -->
+  <div id="task-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="task-title" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="task-title"></h3>
+        <button id="task-close" class="ghost small-btn" aria-label="Stop this task">Stop</button>
+      </div>
+      <div id="task-root"></div>
+    </div>
+  </div>
 
   <div id="toast" class="toast" role="status" hidden></div>
 </body>

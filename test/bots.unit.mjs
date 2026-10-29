@@ -12,7 +12,7 @@ await build({
   entryPoints: { bots: "src/bots.ts", harbor: "src/harbor.ts" },
   outdir: out, format: "esm", bundle: true, platform: "neutral", logLevel: "silent",
 });
-const { decide, newBrain, observe, lastSeen } = await import(out + "bots.js");
+const { decide, newBrain, observe, lastSeen, vouch } = await import(out + "bots.js");
 const { route, PATHS, LOCATIONS } = await import(out + "harbor.js");
 
 console.log("Shadow Haven bot brain tests");
@@ -117,6 +117,44 @@ await test("wanderers keep moving and don't pace straight back", async () => {
     if (d.to === "dock") back++;
   }
   assert.equal(back, 0);
+});
+
+await test("Keeper bots work on a task where they stand, and head for the nearest one", async () => {
+  const b = newBrain(0);
+  const d = decide(b, "chapel", "keeper", [], 1000, ["chapel", "dock"]);
+  assert.equal(d.work, "chapel");
+  assert.equal(d.to, null);
+  assert.ok(d.dwellMs >= 6000, "lighting candles takes a while");
+
+  // Diligent bots usually set off toward the nearest task.
+  let toward = 0;
+  for (let i = 0; i < 200; i++) {
+    const k = newBrain(0);
+    k.personality = "homebody";
+    k.favorite = "market";
+    const r = decide(k, "market", "keeper", [], 1000, ["lighthouse", "netloft"]);
+    if (r.to === "netloft") toward++;
+  }
+  assert.ok(toward > 110, `homebody went for the nearest task ${toward}/200 times`);
+});
+
+await test("Shade bots fake tasks to blend in — never the witnessed lamp", async () => {
+  let worked = 0;
+  for (let i = 0; i < 300; i++) {
+    const b = newBrain(0);
+    const d1 = decide(b, "lighthouse", "shade", [], 1000, ["lighthouse"]);
+    assert.notEqual(d1.work, "lighthouse");
+    const d2 = decide(b, "dock", "shade", [], 1000, ["dock", "lighthouse"]);
+    if (d2.work === "dock") worked++;
+  }
+  assert.ok(worked > 100, `faked the dock task ${worked}/300 times`);
+});
+
+await test("bots remember who they saw prove themselves", async () => {
+  const b = newBrain(0);
+  vouch(b, "wren");
+  vouch(b, "wren");
+  assert.deepEqual(b.vouched, ["wren"]);
 });
 
 done("bots");

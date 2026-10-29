@@ -9,10 +9,11 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./worker";
 import {
   BOT_NAMES, LANTERNS, MAX_PLAYERS, MIN_PLAYERS, MOVE_COOLDOWN_MS, NAME_MAX, REVEAL_MS, SHAPES, shadeCount,
-  type ClientMsg, type Phase, type PublicPlayer, type Role, type ServerMsg,
+  type ClientMsg, type GameResult, type Phase, type PublicPlayer, type PublicTask, type Role, type ServerMsg,
 } from "./shared";
 import { PATHS, START, adjacent, isLoc, type Loc } from "./harbor";
-import { decide, newBrain, observe, type Brain } from "./bots";
+import { decide, newBrain, observe, vouch, type Brain } from "./bots";
+import { TASKS, assignTasks, checkAnswer, makeChallenge, type Attempt, type Task } from "./tasks";
 
 interface Player {
   id: string;
@@ -26,7 +27,10 @@ interface Player {
   role: Role | null;             // secret; only ever sent to this player
   loc: Loc | null;               // secret; only shared with people in the same place
   readyAt: number;               // can't move again before this (ms)
+  tasks: Task[];                 // a Shade's tasks are fake
+  attempt?: Attempt;             // a task mini-game in progress (humans)
   brain?: Brain;                 // bots only
+  working?: { loc: Loc; until: number }; // a bot busy on a task
 }
 
 interface RoomState {
@@ -37,10 +41,11 @@ interface RoomState {
   hostId: string | null;
   players: Player[];
   revealEndsAt: number | null;
+  result: GameResult | null;
 }
 
 function emptyRoom(): RoomState {
-  return { code: "", created: false, createdAt: 0, phase: "lobby", hostId: null, players: [], revealEndsAt: null };
+  return { code: "", created: false, createdAt: 0, phase: "lobby", hostId: null, players: [], revealEndsAt: null, result: null };
 }
 
 interface SocketInfo {
@@ -70,7 +75,7 @@ export class Room extends DurableObject<Env> {
       // Fill in any fields added since the room was saved.
       this.state = { ...emptyRoom(), ...saved };
       this.state.players = this.state.players.map((p) => ({
-        ...p, role: p.role ?? null, loc: p.loc ?? null, readyAt: p.readyAt ?? 0,
+        ...p, role: p.role ?? null, loc: p.loc ?? null, readyAt: p.readyAt ?? 0, tasks: p.tasks ?? [],
       }));
     });
   }
@@ -151,6 +156,9 @@ export class Room extends DurableObject<Env> {
       case "start": return this.onStart(ws, me);
       case "endGame": return this.onEndGame(ws, me);
       case "move": return this.onMove(ws, me, msg.to);
+      case "taskStart": return this.onTaskStart(ws, me, msg.id);
+      case "taskDone": return this.onTaskDone(ws, me, msg);
+      case "taskCancel": delete me.attempt; return;
       case "leave": return this.onLeave(ws, me);
       default: return this.send(ws, { t: "error", code: "unknown", text: "Unknown message." });
     }
@@ -182,7 +190,12 @@ export class Room extends DurableObject<Env> {
       this.refresh([START], now);
     }
 
-    if (s.phase === "playing" && this.anyHumanHere()) this.botTick(now);
+    if (s.phase === "playing" && this.anyHumanHere()) {
+      const progressBefore = this.progress();
+      this.botTick(now);
+      if (this.progress() !== progressBefore) lobbyChanged = true;
+      if (this.checkWin()) lobbyChanged = true;
+    }
 
     if (s.phase === "lobby") {
       const before = s.players.length;
@@ -266,6 +279,7 @@ export class Room extends DurableObject<Env> {
         role: null,
         loc: null,
         readyAt: 0,
+        tasks: [],
       };
       this.state.players.push(me);
     }
@@ -280,6 +294,7 @@ export class Room extends DurableObject<Env> {
     // A player rejoining mid-game gets their own role and surroundings back.
     if (me.role) this.sendRole(ws, me);
     if (this.state.phase === "playing" && me.loc) this.sendView(ws, me);
+    if (me.role && this.state.phase !== "lobby") this.sendTasks(ws, me);
     this.broadcastLobby();
     // Bots pause while nobody is connected; make sure they wake up again.
     await this.scheduleAlarm();
@@ -311,6 +326,7 @@ export class Room extends DurableObject<Env> {
       role: null,
       loc: null,
       readyAt: 0,
+      tasks: [],
     });
     await this.save();
     this.broadcastLobby();
@@ -346,17 +362,24 @@ export class Room extends DurableObject<Env> {
       p.role = shades.has(p.id) ? "shade" : "keeper";
       p.loc = START;
       p.readyAt = playFrom;
+      p.tasks = assignTasks();
+      delete p.attempt;
+      delete p.working;
       if (p.isBot) p.brain = newBrain(playFrom);
     }
 
     this.state.phase = "reveal";
+    this.state.result = null;
     this.state.revealEndsAt = playFrom;
     await this.save();
 
     // Each human hears only their own role.
     for (const sock of this.ctx.getWebSockets()) {
       const p = this.player((sock.deserializeAttachment() as SocketInfo).pid);
-      if (p) this.sendRole(sock, p);
+      if (p) {
+        this.sendRole(sock, p);
+        this.sendTasks(sock, p);
+      }
     }
     this.broadcastLobby();
     await this.scheduleAlarm();
@@ -367,10 +390,14 @@ export class Room extends DurableObject<Env> {
     if (this.state.phase === "lobby") return;
     this.state.phase = "lobby";
     this.state.revealEndsAt = null;
+    this.state.result = null;
     for (const p of this.state.players) {
       p.role = null;
       p.loc = null;
       p.readyAt = 0;
+      p.tasks = [];
+      delete p.attempt;
+      delete p.working;
       delete p.brain;
     }
     await this.save();
@@ -444,6 +471,8 @@ export class Room extends DurableObject<Env> {
     const from = p.loc;
     p.loc = to;
     p.readyAt = now + MOVE_COOLDOWN_MS;
+    delete p.attempt;   // walking away abandons a task
+    delete p.working;
     if (p.brain) p.brain.cameFrom = from;
     this.dirty = true;
     this.refresh(from ? [from, to] : [to], now);
@@ -463,14 +492,115 @@ export class Room extends DurableObject<Env> {
   private botTick(now: number) {
     for (const bot of this.state.players) {
       if (!bot.brain || !bot.loc || !bot.role || now < bot.brain.nextMoveAt) continue;
+      if (this.state.phase !== "playing") return; // the game ended mid-tick
+
+      // Finish whatever it was working on.
+      if (bot.working && now >= bot.working.until) {
+        const task = bot.tasks.find((t) => t.loc === bot.working!.loc && !t.done);
+        if (task && bot.loc === bot.working.loc) this.completeTask(bot, task);
+        delete bot.working;
+      }
+
       const allies = bot.role === "shade"
         ? this.state.players.filter((o) => o.role === "shade" && o.id !== bot.id).map((o) => o.id)
         : [];
-      const choice = decide(bot.brain, bot.loc, bot.role, allies, now);
-      if (choice.to && adjacent(bot.loc, choice.to) && now >= bot.readyAt) this.moveTo(bot, choice.to, now);
+      const todo = bot.tasks.filter((t) => !t.done).map((t) => t.loc);
+      const choice = decide(bot.brain, bot.loc, bot.role, allies, now, todo);
+      if (choice.work) bot.working = { loc: choice.work, until: now + choice.dwellMs };
+      else if (choice.to && adjacent(bot.loc, choice.to) && now >= bot.readyAt) this.moveTo(bot, choice.to, now);
       bot.brain.nextMoveAt = now + Math.max(choice.dwellMs, MOVE_COOLDOWN_MS);
       this.dirty = true;
     }
+  }
+
+  // ---------- Tasks ----------
+
+  private async onTaskStart(ws: WebSocket, me: Player, id: unknown) {
+    const task = me.tasks.find((t) => t.id === id);
+    if (this.state.phase !== "playing" || !task) {
+      return this.send(ws, { t: "error", code: "bad_task", text: "That isn't one of your tasks." });
+    }
+    if (task.done) return this.send(ws, { t: "taskResult", id: task.id, ok: false, text: "Already done." });
+    if (me.loc !== task.loc) {
+      return this.send(ws, { t: "taskResult", id: task.id, ok: false, text: "You need to be there to do that." });
+    }
+    const def = TASKS[task.loc];
+    const { data, answer } = makeChallenge(def.kind);
+    const nonce = crypto.randomUUID();
+    me.attempt = { taskId: task.id, nonce, startedAt: Date.now(), answer };
+    this.send(ws, { t: "taskChallenge", id: task.id, nonce, kind: def.kind, name: def.name, data });
+  }
+
+  private async onTaskDone(ws: WebSocket, me: Player, msg: Extract<ClientMsg, { t: "taskDone" }>) {
+    const a = me.attempt;
+    const task = me.tasks.find((t) => t.id === msg.id);
+    const fail = (text: string) => this.send(ws, { t: "taskResult", id: String(msg.id), ok: false, text });
+    if (this.state.phase !== "playing" || !task || !a || a.taskId !== task.id || a.nonce !== msg.nonce) {
+      return fail("That attempt has expired. Try again.");
+    }
+    if (me.loc !== task.loc) return fail("You walked away.");
+    const now = Date.now();
+    if (now - a.startedAt < TASKS[task.loc].minMs) return fail("Too fast — take a little more care.");
+    if (!checkAnswer(a.answer, msg.answer)) {
+      delete me.attempt;
+      return fail("Not quite. Try again.");
+    }
+    delete me.attempt;
+    this.completeTask(me, task);
+    this.send(ws, { t: "taskResult", id: task.id, ok: true });
+    this.checkWin();
+    this.broadcastLobby();
+    await this.scheduleAlarm();
+  }
+
+  /** Mark a task done. Only a Keeper's counts, and only a Keeper's can be witnessed. */
+  private completeTask(p: Player, task: Task) {
+    task.done = true;
+    this.dirty = true;
+    const real = p.role === "keeper";
+    const def = TASKS[task.loc];
+    if (real && def.witnessed && p.loc) {
+      const text = `${p.name} lit the great lamp — the beam swept the bay.`;
+      const sockets = this.socketsByPlayer();
+      for (const other of this.state.players) {
+        if (other.id === p.id || other.loc !== p.loc) continue;
+        if (other.brain) vouch(other.brain, p.id);
+        for (const ws of sockets.get(other.id) ?? []) this.send(ws, { t: "witness", who: p.id, loc: p.loc, text });
+      }
+    }
+    for (const ws of this.socketsByPlayer().get(p.id) ?? []) this.sendTasks(ws, p);
+  }
+
+  /** Share of all Keeper tasks that are done (0..1). */
+  private progress() {
+    const tasks = this.state.players.filter((p) => p.role === "keeper").flatMap((p) => p.tasks);
+    if (!tasks.length) return 0;
+    return tasks.filter((t) => t.done).length / tasks.length;
+  }
+
+  /** End the game if a side has won. Returns true if it just ended. */
+  private checkWin() {
+    if (this.state.phase !== "playing") return false;
+    if (this.progress() >= 1) {
+      this.finish({ winner: "keepers", reason: "Every lantern in the harbor is burning. The Shades have nowhere left to hide." });
+      return true;
+    }
+    return false;
+  }
+
+  private finish(r: Omit<GameResult, "shades">) {
+    this.state.phase = "ended";
+    this.state.result = { ...r, shades: this.state.players.filter((p) => p.role === "shade").map((p) => p.id) };
+    for (const p of this.state.players) {
+      delete p.attempt;
+      delete p.working;
+    }
+    this.dirty = true;
+  }
+
+  private sendTasks(ws: WebSocket, p: Player) {
+    const tasks: PublicTask[] = p.tasks.map((t) => ({ id: t.id, loc: t.loc, name: TASKS[t.loc].name, done: t.done }));
+    this.send(ws, { t: "tasks", tasks });
   }
 
   private idsAt(loc: Loc, except?: string) {
@@ -573,6 +703,8 @@ export class Room extends DurableObject<Env> {
         ? shadeCount(Math.max(s.players.length, MIN_PLAYERS))
         : s.players.filter((p) => p.role === "shade").length,
       revealEndsAt: s.revealEndsAt,
+      progress: s.phase === "playing" || s.phase === "ended" ? this.progress() : null,
+      result: s.result,
       players: this.state.players.map((p) => ({
         id: p.id,
         name: p.name,
