@@ -12,7 +12,7 @@ await build({
   entryPoints: { bots: "src/bots.ts", harbor: "src/harbor.ts" },
   outdir: out, format: "esm", bundle: true, platform: "neutral", logLevel: "silent",
 });
-const { decide, newBrain, observe, lastSeen, vouch } = await import(out + "bots.js");
+const { decide, newBrain, observe, lastSeen, vouch, chooseSnuff, chooseReport, foundCold, remember } = await import(out + "bots.js");
 const { route, PATHS, LOCATIONS } = await import(out + "harbor.js");
 
 console.log("Shadow Haven bot brain tests");
@@ -155,6 +155,52 @@ await test("bots remember who they saw prove themselves", async () => {
   vouch(b, "wren");
   vouch(b, "wren");
   assert.deepEqual(b.vouched, ["wren"]);
+});
+
+await test("Shade bots strike only when exactly one Keeper is in sight", async () => {
+  let struck = 0;
+  for (let i = 0; i < 200; i++) if (chooseSnuff(["k1"], []) === "k1") struck++;
+  assert.ok(struck > 140, `struck ${struck}/200`);
+  for (let i = 0; i < 50; i++) {
+    assert.equal(chooseSnuff(["k1", "k2"], []), null, "never in front of a witness");
+    assert.equal(chooseSnuff([], []), null);
+    assert.equal(chooseSnuff(["ally"], ["ally"]), null, "never a fellow Shade");
+    const t = chooseSnuff(["ally", "k1"], ["ally"]);
+    assert.ok(t === null || t === "k1", "a partner watching doesn't count");
+  }
+});
+
+await test("Keeper bots always ring the bell; Shades only sometimes", async () => {
+  for (let i = 0; i < 50; i++) assert.equal(chooseReport("keeper", false), true);
+  let own = 0, other = 0;
+  for (let i = 0; i < 400; i++) { if (chooseReport("shade", true)) own++; if (chooseReport("shade", false)) other++; }
+  assert.ok(own < other, `own work ${own} < someone else's ${other}`);
+});
+
+await test("finding a cold lantern, bots note who was near it — once", async () => {
+  const b = newBrain(0);
+  observe(b, "chapel", ["victim", "x", "y"], 10_000);
+  observe(b, "dock", ["z"], 12_000);
+  observe(b, "chapel", ["y"], 20_000);
+  foundCold(b, "chapel", "victim", 25_000, "me");
+  foundCold(b, "chapel", "victim", 26_000, "me");
+  const near = b.evidence.filter((e) => e.kind === "nearCold").map((e) => e.who).sort();
+  assert.deepEqual(near, ["x", "y"], "not the victim, not someone seen elsewhere, no duplicates");
+
+  // Long-ago sightings don't count.
+  const c = newBrain(0);
+  observe(c, "chapel", ["old"], 1_000);
+  foundCold(c, "chapel", "victim", 90_000, "me");
+  assert.equal(c.evidence.length, 0);
+});
+
+await test("evidence is remembered, and the lamp vouches", async () => {
+  const b = newBrain(0);
+  remember(b, { kind: "sawSnuff", who: "s", victim: "v", loc: "dock", at: 1 });
+  remember(b, { kind: "sawSnuff", who: "s", victim: "v", loc: "dock", at: 2 });
+  remember(b, { kind: "lamp", who: "k", loc: "lighthouse", at: 3 });
+  assert.equal(b.evidence.length, 2);
+  assert.deepEqual(b.vouched, ["k"]);
 });
 
 done("bots");

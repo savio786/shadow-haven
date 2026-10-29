@@ -352,6 +352,88 @@ button.big { font-size: 1.3rem; padding: 16px; }
 .over .allies-list { margin: 10px 0 28px; }
 
 .toast.witness { border-color: #ffd84d; background: #2e2716; }
+.toast.danger { border-color: #ff6b5b; background: #3a1616; color: #ffd9d4; }
+
+/* ---------- Goal, hints and actions ---------- */
+.goal {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--flame);
+  background: linear-gradient(90deg, #ffffff08, transparent);
+  font-size: .95rem;
+}
+.hint { margin: 0; font-style: italic; color: #d8cdb5; }
+body.is-shade .hint { color: #d3c6ff; }
+.actions { display: grid; gap: 8px; }
+.actions:empty { display: none; }
+button.report {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: #c9923e; color: #1b1206; border: 0; font-weight: 700;
+  animation: urge 1.6s ease-in-out infinite;
+}
+button.report .bell-svg { flex: none; }
+button.report .bell-waves { display: none; }
+button.snuff { background: #2a1838; border-color: #7b4dff; color: #e3d8ff; font-weight: 600; }
+button.snuff:not(:disabled):hover { background: #3a2050; }
+@keyframes urge { 0%, 100% { box-shadow: 0 0 0 0 #c9923e66; } 50% { box-shadow: 0 0 0 8px #c9923e00; } }
+
+.cold-here { display: grid; gap: 6px; padding: 10px; border-radius: 10px; background: #0f1a28; border: 1px solid #2c4560; }
+.cold-row { display: flex; align-items: center; gap: 10px; color: #cfe2f5; }
+.cold-svg .frost { animation: twinkle 2.8s ease-in-out infinite; }
+.cold-svg .breath { animation: drift 3.2s ease-in-out infinite; }
+@keyframes twinkle { 0%, 100% { opacity: .85; } 50% { opacity: .35; } }
+
+/* ---------- Wisps ---------- */
+.wisp-banner {
+  display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 10px 14px;
+  border-radius: var(--radius); background: #12223a; border: 1px solid #36557c; color: #d6e7fb;
+}
+.wisp-banner p { margin: 0; font-size: .92rem; }
+.wisp-svg { animation: hover 3s ease-in-out infinite; }
+@keyframes hover { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+body.is-wisp .harbor-map { filter: saturate(.35) brightness(1.15) hue-rotate(-10deg); }
+body.is-wisp .goal { border-left-color: #9fc3e8; }
+.here-list li.is-wisp { color: #bcd6f2; font-style: italic; }
+
+/* ---------- Seeing a snuff ---------- */
+body.flash::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 30;
+  background: radial-gradient(circle, transparent 30%, #5b1010aa);
+  animation: flash .9s ease-out forwards;
+}
+@keyframes flash { from { opacity: 1; } to { opacity: 0; } }
+
+/* ---------- Your lantern goes out ---------- */
+.snuffed-overlay {
+  position: fixed; inset: 0; z-index: 25; display: grid; place-items: center; padding: 16px;
+  background: radial-gradient(ellipse at center, #0b1524ee, #04070dfa);
+  animation: fadein .8s ease-out both;
+}
+.snuffed-card { text-align: center; max-width: 360px; display: grid; justify-items: center; gap: 6px; }
+.snuffed-card h2 { color: #cfe2f5; font-size: 1.6rem; margin: 6px 0 0; }
+.snuffed-card p { color: #a9bfd6; }
+.snuffed-card .cold-svg { animation: sink 1.4s ease-out both; }
+@keyframes sink { from { transform: translateY(-14px) rotate(8deg); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------- The bell ---------- */
+.meeting { text-align: center; padding-top: 40px; }
+.bell-art { display: flex; justify-content: center; }
+.bell-svg .bell-swing { transform-origin: 60px 22px; animation: swing 1.1s ease-in-out 3; }
+.bell-svg .bell-waves { animation: ring 1.1s ease-out 3; opacity: 0; }
+@keyframes swing { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(14deg); } 75% { transform: rotate(-14deg); } }
+@keyframes ring { 0% { opacity: .9; } 100% { opacity: 0; } }
+.meeting h1 { font-size: 1.8rem; color: #ffd59a; }
+.cold-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 14px 18px; }
+.cold-list li { display: grid; justify-items: center; gap: 2px; color: #cfe2f5; }
+.meeting .countdown span { background: #c9923e; }
+
+/* ---------- How to play ---------- */
+.howto-card { max-height: calc(100vh - 32px); overflow-y: auto; }
+.howto-steps { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 14px; counter-reset: step; }
+.howto-steps li { display: grid; grid-template-columns: 52px 1fr; gap: 12px; align-items: center; font-size: .95rem; }
+.howto-art { display: grid; place-items: center; width: 52px; height: 58px; border-radius: 12px; background: var(--fog); }
+#howto-open { margin-top: 14px; }
 
 .roster { margin-top: 16px; }
 .roster summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
@@ -394,5 +476,7 @@ button.big { font-size: 1.3rem; padding: 16px; }
 
 @media (prefers-reduced-motion: reduce) {
   .keeper-svg .flame, .shade-svg .smoke, .reveal h1, .reveal-text,
-  .harbor-map .place .ring, .harbor-map .place .halo, .here h3.arrive, .shake, .tug { animation: none; }
+  .harbor-map .place .ring, .harbor-map .place .halo, .here h3.arrive, .shake, .tug,
+  button.report, .cold-svg .frost, .cold-svg .breath, .wisp-svg, body.flash::after,
+  .snuffed-overlay, .snuffed-card .cold-svg, .bell-svg .bell-swing, .bell-svg .bell-waves { animation: none; }
 }

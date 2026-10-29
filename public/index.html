@@ -36,6 +36,7 @@
       </div>
       <p id="home-error" class="error" role="alert"></p>
     </form>
+    <button id="howto-open" class="link">How to play</button>
   </main>
 
   <!-- Lobby -->
@@ -86,6 +87,11 @@
       <button id="peek" class="ghost peek" aria-pressed="false">Peek at my role</button>
     </header>
     <p id="peek-role" class="peek-role" hidden></p>
+    <p id="goal" class="goal"></p>
+    <div id="wisp-banner" class="wisp-banner" hidden>
+      <div id="wisp-art"></div>
+      <p><strong>You are a wisp.</strong> The living can't see or hear you. Keep doing your tasks — they still light the harbor.</p>
+    </div>
 
     <div class="lights" aria-label="Harbor lights lit">
       <div class="lights-bar"><span id="lights-fill"></span></div>
@@ -103,6 +109,9 @@
         <span id="walking" class="walking" hidden>walking…</span>
       </div>
       <p id="here-text" class="muted small"></p>
+      <div id="cold-here" class="cold-here" hidden></div>
+      <p id="hint" class="hint" hidden></p>
+      <div id="actions" class="actions"></div>
       <button id="task-here" class="primary wide" hidden></button>
       <p class="eyebrow">Here with you</p>
       <ul id="here-list" class="here-list"></ul>
@@ -122,6 +131,17 @@
       <button id="end-game" class="ghost wide">Back to lobby (host)</button>
     </div>
     <button id="game-leave" class="link">Leave room</button>
+  </main>
+
+  <!-- Everyone gathers at the bell -->
+  <main id="meeting" class="screen meeting" hidden>
+    <div id="bell-art" class="bell-art"></div>
+    <p class="eyebrow center">The Harbor Bell rings</p>
+    <h1 id="meeting-title"></h1>
+    <p id="meeting-text" class="reveal-text"></p>
+    <ul id="meeting-cold" class="cold-list"></ul>
+    <div class="countdown" aria-hidden="true"><span id="meeting-bar"></span></div>
+    <p class="muted center small">Talking it over and voting someone adrift arrive in the next update. Back to the harbor shortly…</p>
   </main>
 
   <!-- Game over -->
@@ -145,6 +165,39 @@
         <button id="task-close" class="ghost small-btn" aria-label="Stop this task">Stop</button>
       </div>
       <div id="task-root"></div>
+    </div>
+  </div>
+
+  <!-- The moment your lantern goes out -->
+  <div id="snuffed-overlay" class="snuffed-overlay" role="alertdialog" aria-labelledby="snuffed-title" hidden>
+    <div class="snuffed-card">
+      <div id="snuffed-art"></div>
+      <h2 id="snuffed-title">Your lantern went cold</h2>
+      <p id="snuffed-text"></p>
+      <button id="snuffed-ok" class="primary">Drift on as a wisp</button>
+    </div>
+  </div>
+
+  <!-- How to play -->
+  <div id="howto" class="modal" role="dialog" aria-modal="true" aria-labelledby="howto-title" hidden>
+    <div class="modal-card howto-card">
+      <div class="modal-head">
+        <h3 id="howto-title">How to play</h3>
+        <button id="howto-close" class="ghost small-btn">Close</button>
+      </div>
+      <ol class="howto-steps">
+        <li><span class="howto-art" data-art="keeper"></span>
+          <div><strong>Most of you are Lantern Keepers.</strong> Walk the harbor and do your tasks — little jobs in different places. Every task makes the harbor lights brighter. Light them all and the Keepers win.</div></li>
+        <li><span class="howto-art" data-art="shade"></span>
+          <div><strong>One or two of you are secretly Shades.</strong> A Shade snuffs Keepers' lanterns when nobody else is looking, and pretends to do tasks. If the Shades ever match the Keepers in number, the Shades win.</div></li>
+        <li><span class="howto-art" data-art="fog"></span>
+          <div><strong>The harbor is foggy.</strong> You only see who is in the same place as you. Remember who you saw, and where.</div></li>
+        <li><span class="howto-art" data-art="cold"></span>
+          <div><strong>Find a cold lantern? Report it.</strong> That rings the Harbor Bell and everyone gathers. Share what you saw — and work out who the Shade is.</div></li>
+        <li><span class="howto-art" data-art="lamp"></span>
+          <div><strong>Proof you can trust:</strong> only a real Keeper can light the great lamp at the Lighthouse. If you watch someone do it, they're a Keeper.</div></li>
+      </ol>
+      <button id="howto-done" class="primary wide">Got it</button>
     </div>
   </div>
 

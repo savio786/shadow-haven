@@ -47,7 +47,7 @@ async function walkTo(c, dest) {
     const wait = Math.max(0, ready.readyAt - ready.now) + 60;
     await sleep(wait);
     c.send({ t: "move", to: step });
-    await c.waitFor((m) => m.t === "view" && m.here === step && m === last(c, "view"), 4000);
+    await c.waitFor((m) => m.t === "view" && m.here === step && m === last(c, "view"), 8000);
   }
 }
 

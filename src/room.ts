@@ -1,18 +1,22 @@
 // One Durable Object instance = one game room.
 //
-// Lobby → reveal → playing. Players connect over WebSockets (Hibernation API).
-// While playing, players walk the harbor and only ever learn who is in the
-// same location as them ("fog"). Bots think on a timer driven by the room's
-// alarm and see exactly what a human in their place would see.
+// Lobby → reveal → playing ⇄ meeting → ended. Players connect over WebSockets
+// (Hibernation API). While playing, players walk the harbor and only ever learn
+// who is in the same location as them ("fog"). Shades can snuff a Keeper's
+// lantern; the snuffed become wisps the living can't see. Finding a cold
+// lantern and reporting it gathers everyone at the Harbor Bell. Bots think on
+// a timer driven by the room's alarm and see exactly what a human would.
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./worker";
 import {
-  BOT_NAMES, LANTERNS, MAX_PLAYERS, MIN_PLAYERS, MOVE_COOLDOWN_MS, NAME_MAX, REVEAL_MS, SHAPES, shadeCount,
-  type ClientMsg, type GameResult, type Phase, type PublicPlayer, type PublicTask, type Role, type ServerMsg,
+  BOT_NAMES, FIRST_SNUFF_MS, GATHER_MS, LANTERNS, MAX_PLAYERS, MIN_PLAYERS, MOVE_COOLDOWN_MS, NAME_MAX,
+  REVEAL_MS, SHAPES, SNUFF_COOLDOWN_MS, shadeCount,
+  type ClientMsg, type GameResult, type Meeting, type Phase, type PublicPlayer, type PublicTask, type Role,
+  type ServerMsg,
 } from "./shared";
 import { PATHS, START, adjacent, isLoc, type Loc } from "./harbor";
-import { decide, newBrain, observe, vouch, type Brain } from "./bots";
+import { chooseReport, chooseSnuff, decide, foundCold, newBrain, observe, remember, type Brain } from "./bots";
 import { TASKS, assignTasks, checkAnswer, makeChallenge, type Attempt, type Task } from "./tasks";
 
 interface Player {
@@ -28,6 +32,8 @@ interface Player {
   loc: Loc | null;               // secret; only shared with people in the same place
   readyAt: number;               // can't move again before this (ms)
   tasks: Task[];                 // a Shade's tasks are fake
+  alive: boolean;                // false once snuffed (a wisp)
+  snuffReadyAt: number;          // Shades: can't snuff again before this
   attempt?: Attempt;             // a task mini-game in progress (humans)
   brain?: Brain;                 // bots only
   working?: { loc: Loc; until: number }; // a bot busy on a task
@@ -42,10 +48,23 @@ interface RoomState {
   players: Player[];
   revealEndsAt: number | null;
   result: GameResult | null;
+  cold: ColdLantern[];           // snuffed lanterns lying where they fell
+  meeting: Meeting | null;
+  revealed: string[];            // snuffed players everyone has been told about
+}
+
+interface ColdLantern {
+  victim: string;
+  by: string;
+  loc: Loc;
+  at: number;
 }
 
 function emptyRoom(): RoomState {
-  return { code: "", created: false, createdAt: 0, phase: "lobby", hostId: null, players: [], revealEndsAt: null, result: null };
+  return {
+    code: "", created: false, createdAt: 0, phase: "lobby", hostId: null, players: [],
+    revealEndsAt: null, result: null, cold: [], meeting: null, revealed: [],
+  };
 }
 
 interface SocketInfo {
@@ -76,6 +95,7 @@ export class Room extends DurableObject<Env> {
       this.state = { ...emptyRoom(), ...saved };
       this.state.players = this.state.players.map((p) => ({
         ...p, role: p.role ?? null, loc: p.loc ?? null, readyAt: p.readyAt ?? 0, tasks: p.tasks ?? [],
+        alive: p.alive ?? true, snuffReadyAt: p.snuffReadyAt ?? 0,
       }));
     });
   }
@@ -159,6 +179,8 @@ export class Room extends DurableObject<Env> {
       case "taskStart": return this.onTaskStart(ws, me, msg.id);
       case "taskDone": return this.onTaskDone(ws, me, msg);
       case "taskCancel": delete me.attempt; return;
+      case "snuff": return this.onSnuff(ws, me, msg.target);
+      case "report": return this.onReport(ws, me);
       case "leave": return this.onLeave(ws, me);
       default: return this.send(ws, { t: "error", code: "unknown", text: "Unknown message." });
     }
@@ -190,11 +212,21 @@ export class Room extends DurableObject<Env> {
       this.refresh([START], now);
     }
 
+    if (s.phase === "meeting" && s.meeting && now >= s.meeting.endsAt) {
+      // Step 6 turns this into discussion and a vote. For now, back to work.
+      s.phase = "playing";
+      s.meeting = null;
+      lobbyChanged = true;
+      this.dirty = true;
+      this.refresh([START], now);
+    }
+
     if (s.phase === "playing" && this.anyHumanHere()) {
       const progressBefore = this.progress();
       this.botTick(now);
       if (this.progress() !== progressBefore) lobbyChanged = true;
       if (this.checkWin()) lobbyChanged = true;
+      if (s.phase !== "playing") lobbyChanged = true; // a bot rang the bell
     }
 
     if (s.phase === "lobby") {
@@ -280,6 +312,8 @@ export class Room extends DurableObject<Env> {
         loc: null,
         readyAt: 0,
         tasks: [],
+        alive: true,
+        snuffReadyAt: 0,
       };
       this.state.players.push(me);
     }
@@ -293,7 +327,7 @@ export class Room extends DurableObject<Env> {
     this.send(ws, { t: "welcome", you: me.id, code: this.state.code });
     // A player rejoining mid-game gets their own role and surroundings back.
     if (me.role) this.sendRole(ws, me);
-    if (this.state.phase === "playing" && me.loc) this.sendView(ws, me);
+    if ((this.state.phase === "playing" || this.state.phase === "meeting") && me.loc) this.sendView(ws, me);
     if (me.role && this.state.phase !== "lobby") this.sendTasks(ws, me);
     this.broadcastLobby();
     // Bots pause while nobody is connected; make sure they wake up again.
@@ -327,6 +361,8 @@ export class Room extends DurableObject<Env> {
       loc: null,
       readyAt: 0,
       tasks: [],
+      alive: true,
+      snuffReadyAt: 0,
     });
     await this.save();
     this.broadcastLobby();
@@ -363,6 +399,8 @@ export class Room extends DurableObject<Env> {
       p.loc = START;
       p.readyAt = playFrom;
       p.tasks = assignTasks();
+      p.alive = true;
+      p.snuffReadyAt = playFrom + FIRST_SNUFF_MS;
       delete p.attempt;
       delete p.working;
       if (p.isBot) p.brain = newBrain(playFrom);
@@ -370,6 +408,9 @@ export class Room extends DurableObject<Env> {
 
     this.state.phase = "reveal";
     this.state.result = null;
+    this.state.cold = [];
+    this.state.meeting = null;
+    this.state.revealed = [];
     this.state.revealEndsAt = playFrom;
     await this.save();
 
@@ -391,7 +432,11 @@ export class Room extends DurableObject<Env> {
     this.state.phase = "lobby";
     this.state.revealEndsAt = null;
     this.state.result = null;
+    this.state.cold = [];
+    this.state.meeting = null;
+    this.state.revealed = [];
     for (const p of this.state.players) {
+      p.alive = true;
       p.role = null;
       p.loc = null;
       p.readyAt = 0;
@@ -483,7 +528,7 @@ export class Room extends DurableObject<Env> {
     const sockets = this.socketsByPlayer();
     for (const p of this.state.players) {
       if (!p.loc || !locs.includes(p.loc)) continue;
-      if (p.brain) observe(p.brain, p.loc, this.idsAt(p.loc, p.id), now);
+      if (p.brain) observe(p.brain, p.loc, this.visibleTo(p), now);
       for (const ws of sockets.get(p.id) ?? []) this.sendView(ws, p);
     }
   }
@@ -501,16 +546,138 @@ export class Room extends DurableObject<Env> {
         delete bot.working;
       }
 
-      const allies = bot.role === "shade"
-        ? this.state.players.filter((o) => o.role === "shade" && o.id !== bot.id).map((o) => o.id)
-        : [];
-      const todo = bot.tasks.filter((t) => !t.done).map((t) => t.loc);
-      const choice = decide(bot.brain, bot.loc, bot.role, allies, now, todo);
+      const allies = this.alliesOf(bot);
+
+      if (bot.alive) {
+        // A cold lantern at its feet? Remember who was around, maybe ring the bell.
+        const cold = this.state.cold.filter((c) => c.loc === bot.loc);
+        if (cold.length) {
+          for (const c of cold) foundCold(bot.brain, c.loc, c.victim, now, bot.id);
+          if (chooseReport(bot.role, cold.some((c) => c.by === bot.id))) {
+            this.startMeeting(bot, now);
+            return;
+          }
+        }
+        // A Shade alone with a Keeper strikes.
+        if (bot.role === "shade" && now >= bot.snuffReadyAt) {
+          const target = chooseSnuff(this.visibleTo(bot), allies);
+          const victim = this.player(target);
+          if (victim) {
+            this.snuff(bot, victim, now);
+            bot.brain.nextMoveAt = now + 1500 + Math.random() * 2000; // then slip away
+            if (this.checkWin()) return;
+            continue;
+          }
+        }
+      }
+
+      // Wisps keep working (a Keeper's tasks still count) but can't hunt.
+      const role: Role = bot.alive ? bot.role : "keeper";
+      const todo = bot.alive || bot.role === "keeper" ? bot.tasks.filter((t) => !t.done).map((t) => t.loc) : [];
+      const choice = decide(bot.brain, bot.loc, role, bot.alive ? allies : [], now, todo);
       if (choice.work) bot.working = { loc: choice.work, until: now + choice.dwellMs };
       else if (choice.to && adjacent(bot.loc, choice.to) && now >= bot.readyAt) this.moveTo(bot, choice.to, now);
       bot.brain.nextMoveAt = now + Math.max(choice.dwellMs, MOVE_COOLDOWN_MS);
       this.dirty = true;
     }
+  }
+
+  // ---------- Snuffing, cold lanterns and the bell ----------
+
+  private async onSnuff(ws: WebSocket, me: Player, targetId: unknown) {
+    const target = this.player(String(targetId ?? ""));
+    const now = Date.now();
+    if (this.state.phase !== "playing" || me.role !== "shade" || !me.alive) {
+      return this.send(ws, { t: "error", code: "cant_snuff", text: "You can't do that." });
+    }
+    if (!target || !target.alive || target.role !== "keeper" || target.loc !== me.loc) {
+      return this.send(ws, { t: "error", code: "bad_target", text: "They aren't here." });
+    }
+    if (now < me.snuffReadyAt) {
+      return this.send(ws, { t: "error", code: "cooldown", text: "Your shadow hasn't gathered yet." });
+    }
+    this.snuff(me, target, now);
+    this.checkWin();
+    this.broadcastLobby();
+    await this.save();
+    await this.scheduleAlarm();
+  }
+
+  /** Put out a Keeper's lantern. Anyone else alive here sees it happen. */
+  private snuff(shade: Player, victim: Player, now: number) {
+    const loc = shade.loc!;
+    victim.alive = false;
+    delete victim.attempt;
+    delete victim.working;
+    shade.snuffReadyAt = now + SNUFF_COOLDOWN_MS;
+    this.state.cold.push({ victim: victim.id, by: shade.id, loc, at: now });
+    this.dirty = true;
+
+    const sockets = this.socketsByPlayer();
+    for (const ws of sockets.get(victim.id) ?? []) this.send(ws, { t: "snuffed", by: shade.id });
+    for (const other of this.state.players) {
+      if (other.id === shade.id || other.id === victim.id || !other.alive || other.loc !== loc) continue;
+      if (other.brain) remember(other.brain, { kind: "sawSnuff", who: shade.id, victim: victim.id, loc, at: now });
+      const text = `You saw ${shade.name} snuff ${victim.name}'s lantern!`;
+      for (const ws of sockets.get(other.id) ?? []) {
+        this.send(ws, { t: "witness", kind: "snuff", who: shade.id, victim: victim.id, loc, text });
+      }
+    }
+    this.refresh([loc], now);
+  }
+
+  private async onReport(ws: WebSocket, me: Player) {
+    if (this.state.phase !== "playing" || !me.alive || !me.loc) {
+      return this.send(ws, { t: "error", code: "cant_report", text: "You can't do that now." });
+    }
+    if (!this.state.cold.some((c) => c.loc === me.loc)) {
+      return this.send(ws, { t: "error", code: "nothing_here", text: "There's nothing to report here." });
+    }
+    this.startMeeting(me, Date.now());
+    await this.save();
+    this.broadcastLobby();
+    await this.scheduleAlarm();
+  }
+
+  /** Ring the Harbor Bell: everyone gathers in the square and the snuffed are named. */
+  private startMeeting(reporter: Player, now: number) {
+    const s = this.state;
+    const loc = reporter.loc!;
+    const endsAt = now + GATHER_MS;
+    s.phase = "meeting";
+    s.meeting = {
+      reporter: reporter.id,
+      loc,
+      found: s.cold.filter((c) => c.loc === loc).map((c) => c.victim),
+      snuffed: s.players.filter((p) => !p.alive).map((p) => p.id),
+      endsAt,
+    };
+    s.revealed = s.meeting.snuffed;
+    s.cold = []; // the harbor is tidied while everyone talks
+    for (const p of s.players) {
+      p.loc = START;
+      p.readyAt = endsAt;
+      delete p.attempt;
+      delete p.working;
+      if (p.role === "shade") p.snuffReadyAt = Math.max(p.snuffReadyAt, endsAt + FIRST_SNUFF_MS);
+      if (p.brain) p.brain.nextMoveAt = endsAt + 800 + Math.random() * 2500;
+    }
+    this.dirty = true;
+    this.refresh([START], now);
+  }
+
+  /** Who this player can see where they stand: the living see the living; wisps see everyone. */
+  private visibleTo(p: Player) {
+    if (!p.loc) return [];
+    return this.state.players
+      .filter((o) => o.id !== p.id && o.loc === p.loc && (o.alive || !p.alive))
+      .map((o) => o.id);
+  }
+
+  private alliesOf(p: Player) {
+    return p.role === "shade"
+      ? this.state.players.filter((o) => o.role === "shade" && o.id !== p.id).map((o) => o.id)
+      : [];
   }
 
   // ---------- Tasks ----------
@@ -559,13 +726,13 @@ export class Room extends DurableObject<Env> {
     this.dirty = true;
     const real = p.role === "keeper";
     const def = TASKS[task.loc];
-    if (real && def.witnessed && p.loc) {
+    if (real && def.witnessed && p.alive && p.loc) {
       const text = `${p.name} lit the great lamp — the beam swept the bay.`;
       const sockets = this.socketsByPlayer();
       for (const other of this.state.players) {
         if (other.id === p.id || other.loc !== p.loc) continue;
-        if (other.brain) vouch(other.brain, p.id);
-        for (const ws of sockets.get(other.id) ?? []) this.send(ws, { t: "witness", who: p.id, loc: p.loc, text });
+        if (other.brain) remember(other.brain, { kind: "lamp", who: p.id, loc: p.loc, at: Date.now() });
+        for (const ws of sockets.get(other.id) ?? []) this.send(ws, { t: "witness", kind: "lamp", who: p.id, loc: p.loc, text });
       }
     }
     for (const ws of this.socketsByPlayer().get(p.id) ?? []) this.sendTasks(ws, p);
@@ -585,11 +752,19 @@ export class Room extends DurableObject<Env> {
       this.finish({ winner: "keepers", reason: "Every lantern in the harbor is burning. The Shades have nowhere left to hide." });
       return true;
     }
+    const living = this.state.players.filter((p) => p.alive);
+    const shades = living.filter((p) => p.role === "shade").length;
+    const keepers = living.length - shades;
+    if (shades >= keepers) {
+      this.finish({ winner: "shades", reason: "The Shades now match the Keepers lantern for lantern. The harbor goes dark." });
+      return true;
+    }
     return false;
   }
 
   private finish(r: Omit<GameResult, "shades">) {
     this.state.phase = "ended";
+    this.state.meeting = null;
     this.state.result = { ...r, shades: this.state.players.filter((p) => p.role === "shade").map((p) => p.id) };
     for (const p of this.state.players) {
       delete p.attempt;
@@ -603,18 +778,18 @@ export class Room extends DurableObject<Env> {
     this.send(ws, { t: "tasks", tasks });
   }
 
-  private idsAt(loc: Loc, except?: string) {
-    return this.state.players.filter((o) => o.loc === loc && o.id !== except).map((o) => o.id);
-  }
-
   private sendView(ws: WebSocket, p: Player) {
     if (!p.loc) return;
     this.send(ws, {
       t: "view",
       here: p.loc,
       neighbors: PATHS[p.loc],
-      present: this.idsAt(p.loc, p.id),
+      present: this.visibleTo(p),
+      wisps: p.alive ? [] : this.visibleTo(p).filter((id) => !this.player(id)?.alive),
+      cold: this.state.cold.filter((c) => c.loc === p.loc).map((c) => c.victim),
+      alive: p.alive,
       readyAt: p.readyAt,
+      snuffReadyAt: p.role === "shade" ? p.snuffReadyAt : null,
       now: Date.now(), // lets the client correct for its own clock being off
     });
   }
@@ -703,8 +878,9 @@ export class Room extends DurableObject<Env> {
         ? shadeCount(Math.max(s.players.length, MIN_PLAYERS))
         : s.players.filter((p) => p.role === "shade").length,
       revealEndsAt: s.revealEndsAt,
-      progress: s.phase === "playing" || s.phase === "ended" ? this.progress() : null,
+      progress: ["playing", "meeting", "ended"].includes(s.phase) ? this.progress() : null,
       result: s.result,
+      meeting: s.meeting,
       players: this.state.players.map((p) => ({
         id: p.id,
         name: p.name,
@@ -713,6 +889,8 @@ export class Room extends DurableObject<Env> {
         isBot: p.isBot,
         isHost: p.id === this.state.hostId,
         connected: p.isBot || this.isConnected(p.id, ignore),
+        // Snuffs become public at the bell, and everyone's fate at the end.
+        snuffed: !p.alive && (s.phase === "ended" || s.revealed.includes(p.id)),
       })),
     };
   }
@@ -746,6 +924,7 @@ export class Room extends DurableObject<Env> {
     const s = this.state;
     const times: number[] = [];
     if (s.revealEndsAt) times.push(s.revealEndsAt);
+    if (s.meeting) times.push(s.meeting.endsAt);
     if (s.phase === "playing" && this.anyHumanHere()) {
       for (const p of s.players) if (p.brain) times.push(p.brain.nextMoveAt);
     }

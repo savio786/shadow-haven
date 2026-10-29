@@ -15,6 +15,15 @@ export interface Sighting {
   ids: string[];  // who else was there
 }
 
+/** Something a bot saw that matters when the harbor gathers to talk. */
+export interface Evidence {
+  kind: "sawSnuff" | "nearCold" | "lamp";
+  who: string;        // the player it points at (or vouches for, for "lamp")
+  victim?: string;
+  loc: Loc;
+  at: number;
+}
+
 export interface Brain {
   personality: Personality;
   favorite: Loc;          // homebodies keep coming back here
@@ -23,6 +32,7 @@ export interface Brain {
   memory: Sighting[];     // newest last, capped
   goal: Loc | null;       // where it's heading, if anywhere
   vouched: string[];      // players it saw prove themselves (witnessed tasks)
+  evidence: Evidence[];   // what it will bring up when everyone gathers
 }
 
 const MEMORY_CAP = 60;
@@ -43,7 +53,50 @@ export function newBrain(now: number): Brain {
     memory: [],
     goal: null,
     vouched: [],
+    evidence: [],
   };
+}
+
+const EVIDENCE_CAP = 30;
+const NEAR_COLD_MS = 30_000;
+
+export function remember(brain: Brain, ev: Evidence) {
+  const known = brain.evidence.some((e) => e.kind === ev.kind && e.who === ev.who && e.victim === ev.victim);
+  if (known) return;
+  brain.evidence.push(ev);
+  if (brain.evidence.length > EVIDENCE_CAP) brain.evidence.splice(0, brain.evidence.length - EVIDENCE_CAP);
+  if (ev.kind === "lamp") vouch(brain, ev.who);
+}
+
+/**
+ * The bot has found a cold lantern. Note everyone it remembers seeing at that
+ * place shortly before — they were near the scene.
+ */
+export function foundCold(brain: Brain, loc: Loc, victim: string, now: number, self: string) {
+  const near = new Set<string>();
+  for (const s of brain.memory) {
+    if (s.loc !== loc || now - s.at > NEAR_COLD_MS) continue;
+    for (const id of s.ids) if (id !== victim && id !== self) near.add(id);
+  }
+  for (const who of near) remember(brain, { kind: "nearCold", who, victim, loc, at: now });
+}
+
+/**
+ * Should a Shade bot snuff someone here? Only when exactly one Keeper is in
+ * sight (a fellow Shade watching doesn't count) — never in front of a crowd.
+ * @param visible living players here, not counting the bot
+ */
+export function chooseSnuff(visible: string[], allies: string[]): string | null {
+  const keepers = visible.filter((id) => !allies.includes(id));
+  if (keepers.length !== 1) return null;
+  return rand() < 0.85 ? keepers[0] : null;
+}
+
+/** Will this bot report a cold lantern it's standing over? */
+export function chooseReport(role: Role, snuffedItItself: boolean): boolean {
+  if (role === "keeper") return true;
+  // A Shade sometimes reports to look innocent — rarely its own work.
+  return rand() < (snuffedItItself ? 0.25 : 0.6);
 }
 
 /** How keen each personality is to get on with its tasks. */

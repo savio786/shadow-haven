@@ -24,7 +24,8 @@ public/app.js    browser client (home + lobby)
 public/lanterns.js  original Lantern Keeper SVG art
 public/harbor.js original harbor map art
 public/tasks.js  the six task mini-games
-test/            bot brain unit tests + end-to-end tests (lobby, roles, harbor, tasks)
+public/lanterns.js  also: cold lanterns, wisps, the Harbor Bell
+test/            bot brain unit tests + end-to-end tests (lobby, roles, harbor, tasks, snuff)
 wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 ```
 
@@ -73,6 +74,22 @@ remember who they saw do it.
 
 When every Keeper task is done, the Keepers win.
 
+## Snuffing, wisps and the Harbor Bell
+
+A Shade can snuff the lantern of a Keeper in the same place (not in the first
+15 seconds, then once every 25 seconds). Anyone else alive there sees it happen.
+The snuffed Keeper becomes a **wisp**: the living can't see them, but their
+tasks still light the harbor.
+
+A snuffed lantern lies **cold** where it fell. Anyone alive who finds one can
+ring the **Harbor Bell**: everyone gathers in the square, learns whose lanterns
+were found and who has been snuffed, and the cold lanterns are cleared away.
+If the Shades ever match the living Keepers in number, the Shades win.
+
+Bots keep an **evidence log**: who they saw snuff someone, who they remember
+near a cold lantern, and who they watched light the lamp. Shade bots strike
+only when they catch a Keeper alone; Keeper bots always ring the bell.
+
 ## Deploying
 
 Pushing to `main` deploys automatically. The workflow needs two repository secrets
@@ -96,7 +113,7 @@ record pointing somewhere else.
 2. ~~Secret roles: fair Shade picking, private reveal, Shade partners, rejoin keeps your role~~
 3. ~~Harbor map: six locations, fog (you only see who's with you), smart bots that roam and hunt~~
 4. ~~Tasks: six mini-games, server-checked, witnessed lamp, fake tasks for Shades, bots that work, Keepers' task win~~
-5. Snuffing, cold lanterns and reporting
+5. ~~Snuffing, wisps, cold lanterns, the Harbor Bell, Shades' win, bot evidence, How to play~~
 6. Meetings: Harbor Bell, chat, voting, setting adrift
 7. Win conditions and play again
 8. Art pass

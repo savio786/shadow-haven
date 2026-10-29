@@ -30,7 +30,7 @@ export const BOT_NAMES = [
   "Pell", "Quill", "Sorrel", "Juniper", "Oakum",
 ];
 
-export type Phase = "lobby" | "reveal" | "playing" | "ended";
+export type Phase = "lobby" | "reveal" | "playing" | "meeting" | "ended";
 
 export interface GameResult {
   winner: "keepers" | "shades";
@@ -52,12 +52,29 @@ export const REVEAL_MS = 7000;
 /** Walking between locations takes this long before you can move again. */
 export const MOVE_COOLDOWN_MS = 1500;
 
+/** A Shade can't snuff until this long into play (and after each gathering)… */
+export const FIRST_SNUFF_MS = 15_000;
+/** …and then has to wait this long between snuffs. */
+export const SNUFF_COOLDOWN_MS = 25_000;
+
+/** How long everyone gathers at the bell after a cold lantern is reported. */
+export const GATHER_MS = 9000;
+
+export interface Meeting {
+  reporter: string;  // who rang the bell
+  loc: string;       // where the cold lantern was found
+  found: string[];   // whose lanterns were found there
+  snuffed: string[]; // everyone snuffed so far (now public)
+  endsAt: number;
+}
+
 /** 4–6 Keepers → 1 Shade, 7–10 → 2 Shades. */
 export function shadeCount(players: number) {
   return players >= 7 ? 2 : 1;
 }
 
 export interface PublicPlayer {
+  snuffed?: boolean; // only once it's public (after a gathering)
   id: string;
   name: string;
   lantern: string; // LANTERNS[].id
@@ -79,6 +96,8 @@ export type ClientMsg =
   | { t: "taskStart"; id: string }
   | { t: "taskDone"; id: string; nonce: string; answer?: unknown }
   | { t: "taskCancel" }
+  | { t: "snuff"; target: string }
+  | { t: "report" }
   | { t: "leave" }
   | { t: "ping" };
 
@@ -96,18 +115,32 @@ export type ServerMsg =
       revealEndsAt: number | null; // epoch ms, during "reveal"
       progress: number | null;     // 0..1 share of Keeper tasks done, while a game is on
       result: GameResult | null;   // once the game has ended
+      meeting: Meeting | null;     // while everyone is gathered at the bell
     }
   // Sent privately to one player. Never broadcast.
   | { t: "role"; role: Role; allies: string[] }
   // Private: where you are, where you can go, and who is here with you.
-  | { t: "view"; here: string; neighbors: string[]; present: string[]; readyAt: number; now: number }
+  | {
+      t: "view";
+      here: string;
+      neighbors: string[];
+      present: string[];        // who you can see here (the living can't see wisps)
+      cold: string[];           // whose cold lanterns lie here
+      alive: boolean;           // false once you're a wisp
+      wisps: string[];          // (wisps only) which of those present are wisps too
+      readyAt: number;          // when you can walk again
+      snuffReadyAt: number | null; // Shades only: when you can snuff again
+      now: number;
+    }
+  // Private: your lantern was snuffed.
+  | { t: "snuffed"; by: string }
   // Private: your task list (a Shade's is fake, and looks the same).
   | { t: "tasks"; tasks: PublicTask[] }
   // Private: the mini-game for the task you just started.
   | { t: "taskChallenge"; id: string; nonce: string; kind: string; name: string; data: unknown }
   | { t: "taskResult"; id: string; ok: boolean; text?: string }
   // Sent to everyone in a place when something there is plain to see.
-  | { t: "witness"; who: string; loc: string; text: string }
+  | { t: "witness"; kind: "lamp" | "snuff"; who: string; victim?: string; loc: string; text: string }
   | { t: "notice"; text: string }
   | { t: "error"; code: string; text: string }
   | { t: "pong" };

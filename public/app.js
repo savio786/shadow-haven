@@ -1,5 +1,5 @@
 // Shadow Haven — browser client.
-import { keeperSVG, shadeSVG, LANTERNS } from "./lanterns.js";
+import { keeperSVG, shadeSVG, coldLanternSVG, wispSVG, bellSVG, LANTERNS } from "./lanterns.js";
 import { harborSVG, PLACES } from "./harbor.js";
 import { runTask } from "./tasks.js";
 
@@ -34,13 +34,14 @@ let view = null;     // { here, neighbors, present, readyAtLocal } — what we c
 let readyTimer = null;
 let myTasks = [];    // our task list (a Shade's is fake)
 let activeTask = null; // { id, nonce, cleanup } while a mini-game is open
+let snuffTimer = null;  // ticks the Shade's countdown on the snuff button
 let retry = 0;
 let retryTimer = null;
 let pingTimer = null;
 let leaving = false;
 
 // ---------- Screens ----------
-const SCREENS = ["home", "lobby", "reveal", "game", "over"];
+const SCREENS = ["home", "lobby", "reveal", "game", "meeting", "over"];
 function show(screen) {
   for (const s of SCREENS) $(s).hidden = s !== screen;
   document.body.dataset.screen = screen;
@@ -52,6 +53,9 @@ function banner(text) {
 }
 
 let toastTimer;
+const nameOf = (id) => lobby?.players.find((p) => p.id === id)?.name ?? "Someone";
+const playerOf = (id) => lobby?.players.find((p) => p.id === id);
+
 function toast(text, kind = "") {
   $("toast").textContent = text;
   $("toast").className = "toast" + (kind ? " " + kind : "");
@@ -63,6 +67,32 @@ function toast(text, kind = "") {
 function homeError(text) { $("home-error").textContent = text || ""; }
 
 // ---------- Home ----------
+function initHowTo() {
+  const art = {
+    keeper: () => keeperSVG({ lantern: "amber", shape: "hex", size: 34 }),
+    shade: () => shadeSVG({ shape: "round", size: 34 }),
+    fog: () => `<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><path d="M4 16h22M10 22h26M2 28h20" stroke="#9fb4d6" stroke-width="3" stroke-linecap="round" opacity=".7"/></svg>`,
+    cold: () => coldLanternSVG({ shape: "hex", size: 46 }),
+    lamp: () => `<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><path d="M15 36h10l-2-18h-6z" fill="#8a93a6"/><rect x="14" y="12" width="12" height="6" rx="1" fill="#ffb347"/><path d="M26 15l12-6M26 15l12 6" stroke="#ffd59a" stroke-width="2" stroke-linecap="round"/></svg>`,
+  };
+  const open = () => {
+    document.querySelectorAll("#howto .howto-art").forEach((el) => { el.innerHTML = art[el.dataset.art]?.() ?? ""; });
+    $("howto").hidden = false;
+    $("howto-done").focus();
+  };
+  const close = () => ($("howto").hidden = true);
+  $("howto-open").addEventListener("click", open);
+  $("howto-close").addEventListener("click", close);
+  $("howto-done").addEventListener("click", close);
+  $("howto").addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  $("howto").addEventListener("click", (e) => { if (e.target === $("howto")) close(); });
+  // First visit: show it once, unasked.
+  if (!store.get("sh.seenHowTo")) {
+    store.set("sh.seenHowTo", true);
+    setTimeout(open, 400);
+  }
+}
+
 function initHome() {
   $("hero-keeper").innerHTML = keeperSVG({ lantern: "amber", shape: "hex", size: 90 });
   $("name").value = store.get("sh.name") || "";
@@ -179,6 +209,7 @@ function onMessage(msg) {
       // before the "reveal" update, so only clear when the room says lobby.)
       if (msg.phase === "lobby" && lobby?.phase !== "lobby") { myRole = null; allies = []; view = null; myTasks = []; }
       if (msg.phase !== "playing") closeTask();
+      if (msg.phase === "lobby") $("snuffed-overlay").hidden = true;
       lobby = msg;
       renderPhase();
       break;
@@ -198,13 +229,22 @@ function onMessage(msg) {
       onTaskResult(msg);
       break;
     case "witness":
-      toast(msg.text, "witness");
+      toast(msg.text, msg.kind === "snuff" ? "danger" : "witness");
+      if (msg.kind === "snuff") flashScreen();
+      break;
+    case "snuffed":
+      showSnuffed(msg.by);
       break;
     case "view": {
       // Convert the server's "ready at" into our own clock.
       const wait = Math.max(0, msg.readyAt - msg.now);
       const arrived = view && view.here !== msg.here;
-      view = { here: msg.here, neighbors: msg.neighbors, present: msg.present, readyAtLocal: Date.now() + wait };
+      view = {
+        here: msg.here, neighbors: msg.neighbors, present: msg.present, wisps: msg.wisps ?? [],
+        cold: msg.cold ?? [], alive: msg.alive !== false,
+        readyAtLocal: Date.now() + wait,
+        snuffReadyAtLocal: msg.snuffReadyAt == null ? null : Date.now() + Math.max(0, msg.snuffReadyAt - msg.now),
+      };
       clearTimeout(readyTimer);
       if (wait > 0) readyTimer = setTimeout(renderHarbor, wait + 30);
       if (lobby?.phase === "playing") {
@@ -257,6 +297,9 @@ function renderPhase() {
   } else if (lobby.phase === "playing" && myRole) {
     show("game");
     renderGame();
+  } else if (lobby.phase === "meeting" && lobby.meeting) {
+    if ($("meeting").hidden) renderMeeting();
+    show("meeting");
   } else if (lobby.phase === "ended" && lobby.result) {
     show("over");
     renderOver();
@@ -306,7 +349,8 @@ function renderHarbor() {
   if (!view || !lobby) return;
   const self = lobby.players.find((p) => p.id === me);
   const canMove = Date.now() >= view.readyAtLocal;
-  const flame = myRole === "shade" ? "#9b7bff" : (LANTERNS[self?.lantern] ?? "#ffb347");
+  const flame = !view.alive ? "#9fc3e8" : myRole === "shade" ? "#9b7bff" : (LANTERNS[self?.lantern] ?? "#ffb347");
+  document.body.classList.toggle("is-wisp", !view.alive);
 
   // Only rebuild the map when it actually looks different, so a tap is never
   // lost to a redraw caused by someone else walking past.
@@ -344,7 +388,10 @@ function renderHarbor() {
   }
   for (const p of company) {
     const li = document.createElement("li");
-    li.innerHTML = keeperSVG({ lantern: p.lantern, shape: p.shape, dim: !p.connected, size: 30 });
+    li.innerHTML = view.wisps.includes(p.id)
+      ? wispSVG({ lantern: p.lantern, size: 24 })
+      : keeperSVG({ lantern: p.lantern, shape: p.shape, dim: !p.connected, size: 30 });
+    if (view.wisps.includes(p.id)) li.classList.add("is-wisp");
     const n = document.createElement("span");
     n.textContent = p.name;
     li.append(n);
@@ -353,6 +400,121 @@ function renderHarbor() {
     list.append(li);
   }
   requestAnimationFrame(() => nameEl.classList.remove("arrive"));
+  renderSituation(company);
+}
+
+// What you can do right here, explained in plain words.
+function renderSituation(company) {
+  const alive = view.alive;
+  const shade = myRole === "shade";
+
+  $("goal").textContent = !alive
+    ? (shade ? "Your shadow is spent. Watch the harbor." : "Keep doing your tasks — they still count.")
+    : shade
+      ? "Snuff Keepers when nobody's watching. Fake tasks to blend in."
+      : "Do your tasks. Notice who you see where. Find the Shade.";
+  $("wisp-banner").hidden = alive;
+  if (!alive && !$("wisp-art").innerHTML) {
+    const self = playerOf(me);
+    $("wisp-art").innerHTML = wispSVG({ lantern: self?.lantern, size: 42 });
+  }
+
+  // Cold lanterns lying here.
+  const cold = $("cold-here");
+  cold.innerHTML = "";
+  cold.hidden = !view.cold.length;
+  for (const id of view.cold) {
+    const p = playerOf(id);
+    const row = document.createElement("div");
+    row.className = "cold-row";
+    row.innerHTML = coldLanternSVG({ shape: p?.shape, size: 64 });
+    const t = document.createElement("span");
+    t.textContent = id === me ? "Your own lantern lies cold here." : `${p?.name ?? "Someone"}'s lantern lies cold here.`;
+    row.append(t);
+    cold.append(row);
+  }
+
+  // Buttons for what you can actually do.
+  const actions = $("actions");
+  actions.innerHTML = "";
+  let hint = "";
+  if (alive && view.cold.length) {
+    const b = document.createElement("button");
+    b.className = "report wide";
+    b.innerHTML = `${bellSVG({ size: 26 })}<span>Ring the bell — report it</span>`;
+    b.addEventListener("click", () => send({ t: "report" }));
+    actions.append(b);
+    hint = "Everyone will gather in the square and hear whose lantern you found.";
+  }
+  clearInterval(snuffTimer);
+  if (alive && shade && lobby.phase === "playing") {
+    const targets = company.filter((p) => !allies.includes(p.id) && !view.wisps.includes(p.id));
+    const wait = Math.max(0, (view.snuffReadyAtLocal ?? 0) - Date.now());
+    for (const p of targets) {
+      const b = document.createElement("button");
+      b.className = "snuff wide";
+      b.disabled = wait > 0;
+      b.textContent = wait > 0 ? `Snuff ${p.name} · ready in ${Math.ceil(wait / 1000)}s` : `Snuff ${p.name}'s lantern`;
+      b.addEventListener("click", () => {
+        if (targets.length > 1 && !confirm(`${targets.length - 1} other Keeper${targets.length > 2 ? "s" : ""} will see you do it. Snuff ${p.name} anyway?`)) return;
+        send({ t: "snuff", target: p.id });
+      });
+      actions.append(b);
+    }
+    if (targets.length === 1 && !hint) hint = wait > 0
+      ? `You're alone with ${targets[0].name}. Your shadow is still gathering…`
+      : `You're alone with ${targets[0].name}. Nobody would see.`;
+    else if (targets.length > 1 && !hint) hint = `${targets.length} Keepers here — anyone left standing would see you.`;
+    if (targets.length && wait > 0) snuffTimer = setInterval(() => renderSituation(company), 1000);
+  }
+  $("hint").textContent = hint;
+  $("hint").hidden = !hint;
+}
+
+function flashScreen() {
+  document.body.classList.remove("flash");
+  void document.body.offsetWidth;
+  document.body.classList.add("flash");
+}
+
+function showSnuffed(by) {
+  closeTask();
+  const self = playerOf(me);
+  $("snuffed-art").innerHTML = coldLanternSVG({ shape: self?.shape, size: 120 });
+  $("snuffed-text").textContent = `${nameOf(by)} snuffed your lantern. You're a wisp now: nobody living can see you, but your tasks still light the harbor.`;
+  $("snuffed-overlay").hidden = false;
+  $("snuffed-ok").focus();
+}
+
+// ---------- The bell ----------
+function renderMeeting() {
+  const m = lobby.meeting;
+  $("bell-art").innerHTML = bellSVG({ size: 120 });
+  const place = PLACES[m.loc]?.name ?? m.loc;
+  const found = m.found.map(nameOf);
+  $("meeting-title").textContent = `${nameOf(m.reporter)} rang the bell`;
+  $("meeting-text").textContent = found.length
+    ? `${found.join(" and ")}'s lantern${found.length > 1 ? "s were" : " was"} found cold at the ${place}.`
+    : `Something was found at the ${place}.`;
+  const list = $("meeting-cold");
+  list.innerHTML = "";
+  for (const id of m.snuffed) {
+    const p = playerOf(id);
+    const li = document.createElement("li");
+    li.innerHTML = coldLanternSVG({ shape: p?.shape, size: 52 });
+    const n = document.createElement("span");
+    n.textContent = (p?.name ?? "Someone") + (id === me ? " (you)" : "");
+    li.append(n);
+    list.append(li);
+  }
+  const total = Math.max(1, m.endsAt - Date.now());
+  const bar = $("meeting-bar");
+  bar.style.transition = "none";
+  bar.style.width = "100%";
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    bar.style.transition = `width ${total}ms linear`;
+    bar.style.width = "0%";
+  }));
 }
 
 function onMapActivate(e) {
@@ -480,6 +642,7 @@ function renderGame() {
     if (p.isBot) tags.append(tag("Bot", "bot"));
     // Only a Shade's own screen marks their partners.
     if (allies.includes(p.id)) tags.append(tag("Shade", "shade"));
+    if (p.snuffed) { tags.append(tag("Snuffed", "away")); li.classList.add("away"); }
     if (!p.connected) tags.append(tag("Away", "away"));
     li.append(tags);
     $("game-players").append(li);
@@ -507,7 +670,8 @@ function hidePeek() {
 // ---------- Lobby rendering ----------
 function renderLobby() {
   if (!lobby) return;
-  document.body.classList.remove("is-shade");
+  document.body.classList.remove("is-shade", "is-wisp");
+  $("wisp-art").innerHTML = "";
   const isHost = lobby.hostId === me;
   const count = lobby.players.length;
 
@@ -593,6 +757,7 @@ function initLobby() {
   $("task-close").addEventListener("click", () => closeTask(true));
   $("task-modal").addEventListener("keydown", (e) => { if (e.key === "Escape") closeTask(true); });
   $("over-lobby").addEventListener("click", () => send({ t: "endGame" }));
+  $("snuffed-ok").addEventListener("click", () => ($("snuffed-overlay").hidden = true));
   $("map").addEventListener("keydown", onMapActivate);
   $("copy-link").addEventListener("click", async () => {
     const link = `${location.origin}/r/${roomCode}`;
@@ -626,6 +791,7 @@ function route() {
 }
 
 initHome();
+initHowTo();
 initLobby();
 window.addEventListener("popstate", route);
 route();
