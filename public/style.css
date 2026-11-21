@@ -825,3 +825,22 @@ body.app input, body.app textarea, body.app .chat { user-select: text; -webkit-u
 .hush:hover { border-color: var(--line); color: var(--ink); }
 #chat .line.hushed p { display: none; }
 #chat .line.hushed .who::after { content: " · muted"; color: var(--muted); font-weight: 400; }
+
+/* ---------- Special roles ---------- */
+.reveal-special { margin: 14px auto 6px; max-width: 360px; padding: 12px 16px; border-radius: 14px; border: 1px solid var(--flame); background: #ffb3470f; }
+.reveal.shade .reveal-special { border-color: #8a6fe6; background: #8a6fe614; }
+.reveal-special .eyebrow { margin: 0; }
+.reveal-special-title { margin: 2px 0 4px; font-size: 1.35rem; font-weight: 700; text-align: center; }
+.reveal-special .small { margin: 0; text-align: center; }
+.special-note { margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; font-family: var(--sans); font-size: .86rem; border: 1px solid var(--line); background: var(--panel); }
+.special-note.lamplighter { border-color: #ffb34766; }
+.special-note.locksmith { border-color: #8a6fe666; }
+.bar-banner { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 10px 12px; border-radius: 12px; background: #1d1830; border: 1px solid #8a6fe6; font-family: var(--sans); font-size: .9rem; animation: fadein .3s ease-out both; }
+.bar-banner[hidden] { display: none; }
+.bar-banner #bar-text { flex: 1; }
+.padlock { width: 22px; height: 22px; flex: none; background: no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c9b8ff' stroke-width='2'%3E%3Cpath d='M7 11V8a5 5 0 0 1 10 0v3'/%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3C/svg%3E"); }
+.check-btn { background: #2a2416; border-color: var(--flame); color: var(--flame); }
+.bar-btn { background: #1d1830; border-color: #8a6fe6; color: #c9b8ff; }
+.harbor-map .padlock-pin circle { fill: #1d1830; stroke: #8a6fe6; stroke-width: 1.5; }
+.harbor-map .padlock-pin path, .harbor-map .padlock-pin rect { fill: none; stroke: #c9b8ff; stroke-width: 1.4; }
+.harbor-map .place.barred .building { opacity: .75; }

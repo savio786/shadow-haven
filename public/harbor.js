@@ -100,20 +100,22 @@ export function crowdSVG({ here, flame, company = [], shapes = 0, fog = false, s
 }
 
 export function harborSVG(view) {
-  const { here, neighbors = [], canMove, flame, tasks = [], fog = false } = view;
+  const { here, neighbors = [], canMove, flame, tasks = [], fog = false, barred = null } = view;
+  // Barred doors: nobody walks into or out of that place.
+  const blocked = (id) => barred && (barred === id || barred === here);
 
   const paths = PATHS.map(([a, b]) => {
     const A = PLACES[a], B = PLACES[b];
-    const live = here && ((a === here && neighbors.includes(b)) || (b === here && neighbors.includes(a)));
+    const live = here && ((a === here && neighbors.includes(b)) || (b === here && neighbors.includes(a))) && !blocked(a === here ? b : a);
     const mx = (A.x + B.x) / 2 + (A.y - B.y) * 0.08, my = (A.y + B.y) / 2 + (B.x - A.x) * 0.08;
     return `<path d="M${A.x} ${A.y + 10} Q${mx} ${my + 10} ${B.x} ${B.y + 10}" class="path${live ? " live" : ""}"/>`;
   }).join("");
 
   const nodes = Object.entries(PLACES).map(([id, p]) => {
     const isHere = id === here;
-    const isNext = neighbors.includes(id);
-    const cls = ["place", isHere ? "here" : "", isNext ? "next" : "", isNext && !canMove ? "wait" : ""].join(" ").trim();
-    const label = `${p.name}${isHere ? " (you are here)" : isNext ? " — walk here" : ""}`;
+    const isNext = neighbors.includes(id) && !blocked(id);
+    const cls = ["place", isHere ? "here" : "", isNext ? "next" : "", isNext && !canMove ? "wait" : "", barred === id ? "barred" : ""].join(" ").trim();
+    const label = `${p.name}${barred === id ? " (doors barred)" : ""}${isHere ? " (you are here)" : isNext ? " — walk here" : ""}`;
     const interactive = isNext ? ` role="button" tabindex="0" data-place="${id}" aria-label="${label}"` : ` aria-label="${label}"`;
     const w = p.name.length * 5.6 + 14;
     return `<g class="${cls}" transform="translate(${p.x} ${p.y})"${interactive}>
@@ -122,6 +124,7 @@ export function harborSVG(view) {
       ${isHere ? `<ellipse class="ring" cx="0" cy="14" rx="26" ry="7" style="stroke:${flame}"/>` : ""}
       <g class="label" transform="translate(0 30)"><rect x="${-w / 2}" y="-9" width="${w}" height="14" rx="7"/><text y="1.5">${p.name}</text></g>
       ${tasks.includes(id) ? `<g class="task-pin" transform="translate(20 -22)"><circle r="6"/><path d="M-2.5 0l1.8 1.8 3.2-3.6"/></g>` : ""}
+      ${barred === id ? `<g class="padlock-pin" transform="translate(-21 -20)"><circle r="9"/><path d="M-3.2 -1.5v-2.2a3.2 3.2 0 0 1 6.4 0v2.2"/><rect x="-4.6" y="-1.6" width="9.2" height="7" rx="1.6"/></g>` : ""}
     </g>`;
   }).join("");
 

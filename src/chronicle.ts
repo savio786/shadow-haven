@@ -51,13 +51,17 @@ export function computeHonors({ players, log, lamps, winner }: HonorInput): Hono
     }
   }
 
+  // The Lamplighter who looked into a Shade's lantern.
+  const keen = log.find((e) => e.kind === "check" && e.wasShade && e.who && !given.has(e.who));
+  if (keen?.who) add({ id: "sharp", title: "Keen eye", who: keen.who, why: "the Lamplighter who saw a Shade's cold flame" });
+
   // Broke the Shades' fog.
   const breaker = log.find((e) => e.kind === "relight" && e.who && !given.has(e.who));
   if (breaker?.who) add({ id: "lamp", title: "Fog breaker", who: breaker.who, why: "relit the great lamp and lifted the fog" });
 
   // Proved themselves at the great lamp.
   const lamp = lamps.find((id) => !given.has(id)) ?? lamps[0];
-  if (lamp) add({ id: "lamp", title: "Lamplighter", who: lamp, why: "lit the great lamp for all to see" });
+  if (lamp) add({ id: "lamp", title: "Torchbearer", who: lamp, why: "lit the great lamp for all to see" });
 
   // A Keeper who made it to the end of a Keepers' win.
   if (winner === "keepers") {
@@ -84,6 +88,8 @@ export function taleFacts(input: { players: PlayerSummary[]; names: Record<strin
     if (e.kind === "spared") facts.push(`The town could not agree, and nobody was set adrift.`);
     if (e.kind === "fog") facts.push(`${n(e.who)} secretly called a cold fog over the harbor, hiding every face.`);
     if (e.kind === "relight") facts.push(`${n(e.who)} relit the great lamp at the Lighthouse and the fog lifted.`);
+    if (e.kind === "check") facts.push(`${n(e.who)}, the Lamplighter, secretly looked into ${n(e.victim)}'s lantern and saw ${e.wasShade ? "the cold flame of a Shade" : "a true Keeper's flame"}.`);
+    if (e.kind === "bar") facts.push(`${n(e.who)}, the Shades' Locksmith, barred the doors of ${PLACE[e.loc ?? ""] ?? "a building"}.`);
   }
   facts.push(input.winner === "keepers" ? `In the end the Keepers won. ${input.reason}` : `In the end the Shades won. ${input.reason}`);
   return facts;
@@ -115,6 +121,8 @@ export function fallbackTale(input: { players: PlayerSummary[]; names: Record<st
     if (e.kind === "spared") parts.push("Nobody could agree, and the boats stayed tied.");
     if (e.kind === "fog") parts.push("Then a cold fog rolled in, and every face became a shape.");
     if (e.kind === "relight") parts.push(`${n(e.who)} climbed the Lighthouse and relit the great lamp; the fog fled.`);
+    if (e.kind === "check") parts.push(e.wasShade ? `${n(e.who)} held a lantern close and saw it burn cold.` : `${n(e.who)} looked into ${n(e.victim)}'s lantern and found it true.`);
+    if (e.kind === "bar") parts.push(`Bolts slammed shut at ${PLACE[e.loc ?? ""] ?? "a doorway"}.`);
   }
   parts.push(input.winner === "keepers"
     ? `By dawn every lantern that mattered was burning, and ${shades.join(" and ")} had nowhere left to hide.`

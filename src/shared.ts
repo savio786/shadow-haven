@@ -48,6 +48,7 @@ export interface GameResult {
 export interface PlayerSummary {
   id: string;
   role: Role;
+  special?: Special | null;
   fate: "survived" | "snuffed" | "adrift";
   where: string | null;      // where they were snuffed
   tasksDone: number;         // real tasks (Shades' fakes don't count)
@@ -65,7 +66,7 @@ export interface Honor {
 
 export interface MatchEvent {
   at: number;                // ms since play began
-  kind: "snuff" | "report" | "bell" | "adrift" | "spared" | "fog" | "relight";
+  kind: "snuff" | "report" | "bell" | "adrift" | "spared" | "fog" | "relight" | "check" | "bar";
   who?: string;              // snuffer / reporter / ringer / the one set adrift
   victim?: string;
   loc?: string;
@@ -80,6 +81,17 @@ export interface PublicTask {
   done: boolean;
 }
 export type Role = "keeper" | "shade";
+/** Special roles: one Keeper may be the Lamplighter, one Shade the Locksmith. */
+export type Special = "lamplighter" | "locksmith";
+
+/** The Lamplighter appears from this many players up (at 4 it would decide the game alone). */
+export const LAMPLIGHTER_MIN_PLAYERS = 5;
+/** The Locksmith bars the doors of where they stand: nobody in or out for this long… */
+export const BAR_MS = 12_000;
+/** …first usable this long into play (and after each gathering)… */
+export const FIRST_BAR_MS = 25_000;
+/** …then rests this long after the doors open again. */
+export const BAR_COOLDOWN_MS = 40_000;
 
 /** How long the private role reveal stays on screen before play begins. */
 export const REVEAL_MS = 7000;
@@ -106,9 +118,10 @@ export interface Settings {
   meeting: MeetingPace; // how long the harbor talks and votes
   tasks: number;        // tasks each, TASKS_MIN–TASKS_MAX
   public: boolean;      // open to anyone through Play now
+  specials: boolean;    // deal the Lamplighter and the Locksmith
 }
 
-export const DEFAULT_SETTINGS: Settings = { botLevel: "normal", auto: false, shades: 0, meeting: "normal", tasks: 5, public: false };
+export const DEFAULT_SETTINGS: Settings = { botLevel: "normal", auto: false, shades: 0, meeting: "normal", tasks: 5, public: false, specials: true };
 
 /** Public rooms start by themselves: this long after the first person arrives… */
 export const AUTO_START_MS = 40_000;
@@ -201,7 +214,9 @@ export type ClientMsg =
   | { t: "start" }
   | { t: "endGame" }
   | { t: "playAgain" }
-  | { t: "settings"; botLevel?: BotLevel; auto?: boolean; shades?: number; meeting?: MeetingPace; tasks?: number; public?: boolean }
+  | { t: "settings"; botLevel?: BotLevel; auto?: boolean; shades?: number; meeting?: MeetingPace; tasks?: number; public?: boolean; specials?: boolean }
+  | { t: "check"; target: string }
+  | { t: "bar" }
   | { t: "fog" }
   | { t: "relight" }
   | { t: "move"; to: string }
@@ -236,9 +251,12 @@ export type ServerMsg =
       settings: Settings;
       fogUntil: number | null;     // the fog is down until then (everyone knows)
       autoStartAt: number | null;  // a public room starts by itself then
+      barred: { loc: string; until: number } | null; // a place whose doors the Locksmith has barred
     }
   // Sent privately to one player. Never broadcast.
-  | { t: "role"; role: Role; allies: string[] }
+  | { t: "role"; role: Role; allies: string[]; special: Special | null }
+  // Private: what the Lamplighter saw in someone's lantern.
+  | { t: "checked"; who: string; role: Role }
   // Private: where you are, where you can go, and who is here with you.
   | {
       t: "view";
@@ -253,6 +271,8 @@ export type ServerMsg =
       fog: boolean;                // you're in the fog: names hidden
       shapes: number;              // in the fog: how many shapes are here
       fogReadyAt: number | null;   // Shades only: when the fog can be called
+      canCheck: boolean;           // the Lamplighter still has their one look
+      barReadyAt: number | null;   // the Locksmith only: when the doors can be barred again
       now: number;
     }
   // Private: your lantern was snuffed.

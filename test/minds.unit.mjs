@@ -197,4 +197,28 @@ await test("the last person seen alone with the victim is a strong lead", async 
   assert.equal(line.suspect, "f");
 });
 
+await test("the Lamplighter speaks up about what it saw, and Keepers vote on it", async () => {
+  const c = ctx({ setup: (b) => remember(b, { kind: "checked", who: "f", loc: "dock", at: 1, shade: true }) });
+  c.self.special = "lamplighter";
+  assert.match(M.knowledge(c).join(" "), /Fennel IS a Shade/);
+  assert.match(M.buildPrompt(c).system, /LAMPLIGHTER/);
+  const said = M.fallbackLine(c);
+  assert.match(said.say, /Lamplighter/);
+  assert.equal(said.suspect, "f");
+  assert.equal(M.chooseVote({ ...c, level: "easy" }, null), "f", "even an easy bot trusts its own look");
+  // Someone claiming a cold flame counts as an accusation.
+  assert.ok(M.readChat([line(1, "w", "Fennel's flame burns cold")], names).accused.get("f"));
+});
+
+await test("a cunning Shade may pose as the Lamplighter — never against its partner, never twice", async () => {
+  let claims = 0;
+  for (let i = 0; i < 300; i++) {
+    const r = M.fallbackLine({ ...ctx({ role: "shade", allies: ["s"] }), level: "cunning" });
+    if (/Lamplighter/.test(r.say)) { claims++; assert.notEqual(r.suspect, "s"); }
+  }
+  assert.ok(claims > 30 && claims < 150, `claimed ${claims}/300`);
+  const already = { ...ctx({ role: "shade", chat: [line(1, "w", "I'm the Lamplighter, Mira is fine")] }), level: "cunning" };
+  for (let i = 0; i < 50; i++) assert.doesNotMatch(M.fallbackLine(already).say, /Lamplighter/);
+});
+
 done("minds");

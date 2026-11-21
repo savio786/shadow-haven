@@ -113,6 +113,13 @@
         </div>
       </div>
       <div class="setting-row">
+        <p class="setting-label">Special roles</p>
+        <div id="set-specials" class="segmented two" role="radiogroup" aria-label="Special roles">
+          <button role="radio" data-value="true">On</button>
+          <button role="radio" data-value="false">Off</button>
+        </div>
+      </div>
+      <div class="setting-row">
         <p class="setting-label">Shades</p>
         <div id="set-shades" class="segmented" role="radiogroup" aria-label="Number of Shades">
           <button role="radio" data-value="0">Auto</button>
@@ -157,6 +164,11 @@
     <div id="reveal-keeper" class="reveal-art" aria-hidden="true"></div>
     <h1 id="reveal-title"></h1>
     <p id="reveal-text" class="reveal-text"></p>
+    <div id="reveal-special" class="reveal-special" hidden>
+      <p class="eyebrow center">And you are…</p>
+      <p id="reveal-special-title" class="reveal-special-title"></p>
+      <p id="reveal-special-text" class="muted small"></p>
+    </div>
     <div id="reveal-allies" class="allies" hidden>
       <p class="eyebrow center">Your fellow Shade</p>
       <ul id="allies-list" class="allies-list"></ul>
@@ -177,6 +189,12 @@
     </header>
     <p id="peek-role" class="peek-role" hidden></p>
     <p id="goal" class="goal"></p>
+    <div id="bar-banner" class="bar-banner" role="status" hidden>
+      <span class="padlock" aria-hidden="true"></span>
+      <span id="bar-text"></span>
+      <span id="bar-secs" class="fog-secs"></span>
+    </div>
+    <p id="special-note" class="special-note" hidden></p>
     <div id="fog-banner" class="fog-banner" role="status" hidden>
       <span id="fog-text"></span>
       <span id="fog-secs" class="fog-secs"></span>
@@ -370,6 +388,8 @@
           <div><strong>Beware the fog.</strong> Shades can hide every face for a while. Anyone can lift it by relighting the great lamp at the Lighthouse.</div></li>
         <li><span class="howto-art" data-art="lamp"></span>
           <div><strong>Proof you can trust:</strong> only a real Keeper can light the great lamp at the Lighthouse. If you watch someone do it, they're a Keeper.</div></li>
+              <li><span class="howto-art" data-art="special"></span>
+          <div><strong>Special roles.</strong> One Keeper may be the <em>Lamplighter</em>, who can look into one person's lantern to see if they're a Shade. One Shade may be the <em>Locksmith</em>, who can bar the doors of a place so nobody gets in or out for a while.</div></li>
       </ol>
       <button id="howto-done" class="primary wide">Got it</button>
     </div>

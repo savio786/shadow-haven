@@ -17,11 +17,12 @@ export interface Sighting {
 
 /** Something a bot saw that matters when the harbor gathers to talk. */
 export interface Evidence {
-  kind: "sawSnuff" | "nearCold" | "lastWith" | "lamp";
+  kind: "sawSnuff" | "nearCold" | "lastWith" | "lamp" | "checked";
   who: string;        // the player it points at (or vouches for, for "lamp")
   victim?: string;
   loc: Loc;
   at: number;
+  shade?: boolean;    // "checked": what the Lamplighter saw in their lantern
 }
 
 export interface Brain {
@@ -65,7 +66,30 @@ export function remember(brain: Brain, ev: Evidence) {
   if (known) return;
   brain.evidence.push(ev);
   if (brain.evidence.length > EVIDENCE_CAP) brain.evidence.splice(0, brain.evidence.length - EVIDENCE_CAP);
-  if (ev.kind === "lamp") vouch(brain, ev.who);
+  if (ev.kind === "lamp" || (ev.kind === "checked" && !ev.shade)) vouch(brain, ev.who);
+}
+
+/**
+ * The Lamplighter bot's one look: at someone it has reason to doubt, or — once
+ * it has waited a while — at whoever is with it. Sharper bots look sooner.
+ */
+export function chooseCheck(brain: Brain, visible: string[], level: BotLevel, now: number): string | null {
+  const others = visible.filter((id) => !brain.vouched.includes(id));
+  if (!others.length) return null;
+  const doubted = others.filter((id) => brain.evidence.some((e) => e.who === id && e.kind !== "lamp" && e.kind !== "checked"));
+  if (doubted.length) return rand() < 0.9 ? pick(doubted) : null;
+  const eager = ({ easy: 0.04, normal: 0.08, cunning: 0.14 } as const)[level];
+  return rand() < eager ? pick(others) : null;
+}
+
+/**
+ * The Locksmith bot bars the doors when it's alone with one Keeper and about
+ * to strike — so nobody walks in on it, and the Keeper can't run.
+ */
+export function chooseBar(visible: string[], allies: string[], strikeSoon: boolean, level: BotLevel): boolean {
+  const keepers = visible.filter((id) => !allies.includes(id));
+  if (keepers.length !== 1 || !strikeSoon) return false;
+  return rand() < ({ easy: 0.2, normal: 0.55, cunning: 0.85 } as const)[level];
 }
 
 /**

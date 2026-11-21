@@ -12,7 +12,7 @@ await build({
   entryPoints: { bots: "src/bots.ts", harbor: "src/harbor.ts" },
   outdir: out, format: "esm", bundle: true, platform: "neutral", logLevel: "silent",
 });
-const { decide, newBrain, observe, lastSeen, vouch, chooseSnuff, chooseReport, foundCold, remember, chooseFog, chooseRelight } = await import(out + "bots.js");
+const { decide, newBrain, observe, lastSeen, vouch, chooseSnuff, chooseReport, foundCold, remember, chooseFog, chooseRelight, chooseCheck, chooseBar } = await import(out + "bots.js");
 const { route, PATHS, LOCATIONS } = await import(out + "harbor.js");
 
 console.log("Shadow Haven bot brain tests");
@@ -232,6 +232,30 @@ await test("once a bot sets off for a task, it sees it through; wisps always wor
     const d = decide(w, "chapel", "keeper", [], 1000, ["lighthouse"], true);
     assert.ok(["market", "netloft"].includes(d.to), `a focused wisp heads for its task, got ${d.to}`);
   }
+});
+
+await test("the Lamplighter bot looks at someone it doubts, never someone proven", async () => {
+  const b = newBrain(0);
+  remember(b, { kind: "nearCold", who: "x", victim: "v", loc: "chapel", at: 1 });
+  remember(b, { kind: "lamp", who: "y", loc: "lighthouse", at: 2 });
+  let x = 0;
+  for (let i = 0; i < 200; i++) { const t = chooseCheck(b, ["x", "y", "z"], "normal", 3); if (t === "x") x++; assert.notEqual(t, "y"); }
+  assert.ok(x > 150, `looked at the doubted one ${x}/200`);
+  assert.equal(chooseCheck(newBrain(0), [], "cunning", 1), null, "nobody here, no look");
+  // What it learns: a true flame vouches; a cold one is evidence.
+  const c = newBrain(0);
+  remember(c, { kind: "checked", who: "k", loc: "dock", at: 1, shade: false });
+  assert.deepEqual(c.vouched, ["k"]);
+});
+
+await test("the Locksmith bot bars the doors only alone with one Keeper, about to strike", async () => {
+  const count = (fn) => { let n = 0; for (let i = 0; i < 1000; i++) if (fn()) n++; return n; };
+  assert.equal(count(() => chooseBar(["k1", "k2"], [], true, "cunning")), 0, "never with two Keepers watching");
+  assert.equal(count(() => chooseBar(["k1"], [], false, "cunning")), 0, "never long before it can strike");
+  assert.equal(count(() => chooseBar(["ally"], ["ally"], true, "cunning")), 0, "never just with its partner");
+  const easy = count(() => chooseBar(["k1"], [], true, "easy"));
+  const cunning = count(() => chooseBar(["k1"], [], true, "cunning"));
+  assert.ok(easy < cunning && cunning > 700, `${easy} < ${cunning}`);
 });
 
 done("bots");

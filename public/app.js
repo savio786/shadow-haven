@@ -31,6 +31,8 @@ let me = null;
 let lobby = null;
 let myRole = null;   // "keeper" | "shade" — only ever our own
 let allies = [];     // fellow Shades' ids (only if we're a Shade)
+let mySpecial = null; // "lamplighter" | "locksmith" | null — only ever our own
+let myCheck = null;   // what the Lamplighter saw: { who, role }
 let view = null;     // { here, neighbors, present, readyAtLocal } — what we can see
 let readyTimer = null;
 let myTasks = [];    // our task list (a Shade's is fake)
@@ -98,6 +100,7 @@ function initHowTo() {
     cold: () => coldLanternSVG({ shape: "hex", size: 46 }),
     fogcall: () => `<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><ellipse cx="20" cy="22" rx="16" ry="8" fill="#9fb4d6" opacity=".35"/><ellipse cx="14" cy="17" rx="3" ry="6" fill="#0c0f18"/><ellipse cx="26" cy="18" rx="3" ry="6" fill="#0c0f18"/><path d="M4 28h30M8 33h24" stroke="#b7c6dd" stroke-width="2.5" stroke-linecap="round" opacity=".6"/></svg>`,
     lamp: () => `<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><path d="M15 36h10l-2-18h-6z" fill="#8a93a6"/><rect x="14" y="12" width="12" height="6" rx="1" fill="#ffb347"/><path d="M26 15l12-6M26 15l12 6" stroke="#ffd59a" stroke-width="2" stroke-linecap="round"/></svg>`,
+    special: () => `<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><circle cx="14" cy="17" r="8" fill="none" stroke="#ffb347" stroke-width="2.5"/><path d="M20 23l6 6" stroke="#ffb347" stroke-width="3" stroke-linecap="round"/><path d="M26 22v-3a4 4 0 0 1 8 0v3" fill="none" stroke="#c9b8ff" stroke-width="2"/><rect x="24" y="22" width="12" height="10" rx="2" fill="#8a6fe6"/></svg>`,
   };
   const open = () => {
     document.querySelectorAll("#howto .howto-art").forEach((el) => { el.innerHTML = art[el.dataset.art]?.() ?? ""; });
@@ -332,6 +335,8 @@ function onMessage(msg) {
     case "role":
       myRole = msg.role;
       allies = msg.allies || [];
+      if (mySpecial !== (msg.special ?? null) || lobby?.phase === "reveal") myCheck = null;
+      mySpecial = msg.special ?? null;
       if (lobby && lobby.phase !== "lobby") renderPhase();
       break;
     case "tasks":
@@ -344,6 +349,14 @@ function onMessage(msg) {
     case "taskResult":
       onTaskResult(msg);
       break;
+    case "checked": {
+      myCheck = { who: msg.who, role: msg.role };
+      const cold = msg.role === "shade";
+      toast(cold ? `${nameOf(msg.who)}'s flame burns cold. ${nameOf(msg.who)} is a Shade!` : `${nameOf(msg.who)}'s flame burns true — a Keeper.`, cold ? "danger" : "witness");
+      if (cold) { sfx.snuff(); buzz([60, 40, 60]); } else sfx.chime(true);
+      renderHarbor();
+      break;
+    }
     case "witness":
       toast(msg.text, msg.kind === "snuff" ? "danger" : "witness");
       mySaw.push({ kind: msg.kind, who: msg.who, victim: msg.victim });
@@ -376,6 +389,8 @@ function onMessage(msg) {
         here: msg.here, neighbors: msg.neighbors, present: msg.present, wisps: msg.wisps ?? [],
         cold: msg.cold ?? [], alive: msg.alive !== false,
         fog: !!msg.fog, shapes: msg.shapes ?? 0, fogReadyAt: msg.fogReadyAt ?? null,
+        canCheck: !!msg.canCheck,
+        barReadyAtLocal: msg.barReadyAt == null ? null : Date.now() + Math.max(0, msg.barReadyAt - msg.now),
         readyAtLocal: Date.now() + wait,
         snuffReadyAtLocal: msg.snuffReadyAt == null ? null : Date.now() + Math.max(0, msg.snuffReadyAt - msg.now),
       };
@@ -506,6 +521,16 @@ function renderReveal() {
     ? "Snuff the harbor lights one by one. Blend in, lie well, and don't get set adrift."
     : `Keep the harbor lit and finish your tasks. ${lobby.shades === 1 ? "One Shade hides" : `${lobby.shades} Shades hide`} among you — find them.`;
 
+  const SPECIAL = {
+    lamplighter: ["The Lamplighter", "Once this game, look into the lantern of someone standing with you and learn if they're a Keeper or a Shade. Then convince the others — a Shade may pretend to be you."],
+    locksmith: ["The Locksmith", "Bar the doors of the place you're in: for 12 seconds nobody gets in or out. Trap a lone Keeper — but everyone sees the padlock, and those inside know you're among them."],
+  };
+  $("reveal-special").hidden = !mySpecial;
+  if (mySpecial) {
+    $("reveal-special-title").textContent = SPECIAL[mySpecial][0];
+    $("reveal-special-text").textContent = SPECIAL[mySpecial][1];
+  }
+
   $("reveal-allies").hidden = !(shade && allies.length);
   $("allies-list").innerHTML = "";
   for (const id of allies) {
@@ -541,9 +566,10 @@ function renderHarbor() {
   // Only rebuild the map when it actually looks different, so a tap is never
   // lost to a redraw caused by someone else walking past.
   const todo = myTasks.filter((t) => !t.done).map((t) => t.loc);
-  const mapKey = [view.here, view.neighbors.join(), canMove, flame, todo.join(), view.fog].join("|");
+  const barred = lobby.barred && lobby.barred.until > serverNow() ? lobby.barred.loc : null;
+  const mapKey = [view.here, view.neighbors.join(), canMove, flame, todo.join(), view.fog, barred].join("|");
   if ($("map").dataset.key !== mapKey) {
-    $("map").innerHTML = harborSVG({ here: view.here, neighbors: view.neighbors, canMove, flame, tasks: todo, fog: view.fog });
+    $("map").innerHTML = harborSVG({ here: view.here, neighbors: view.neighbors, canMove, flame, tasks: todo, fog: view.fog, barred });
     $("map").dataset.key = mapKey;
   }
   // The lanterns around you update on their own layer, so a tap is never lost to a redraw.
@@ -608,6 +634,7 @@ function renderHarbor() {
 // What you can do right here, explained in plain words.
 function stopGameTimers() {
   clearInterval(snuffTimer);
+  snuffTimer = null;
   clearInterval(fogTimer);
   document.body.classList.remove("in-fog");
 }
@@ -624,6 +651,28 @@ function renderSituation(company) {
       ? "Snuff Keepers when nobody's watching. Fake tasks to blend in."
       : "Do your tasks. Notice who you see where. Find the Shade.";
   $("wisp-banner").hidden = alive;
+
+  // Special roles: what the Lamplighter knows; barred doors for everyone.
+  const note = $("special-note");
+  note.hidden = !(mySpecial && alive);
+  if (mySpecial === "lamplighter") {
+    note.className = "special-note lamplighter";
+    note.textContent = myCheck
+      ? `Lamplighter: ${nameOf(myCheck.who)}'s flame ${myCheck.role === "shade" ? "burns cold — a Shade." : "burns true — a Keeper."}`
+      : "Lamplighter: you have one look into someone's lantern. Use it on whoever you doubt.";
+  } else if (mySpecial === "locksmith") {
+    note.className = "special-note locksmith";
+    note.textContent = "Locksmith: bar the doors to trap a Keeper alone with you.";
+  }
+  const bar = lobby.barred && lobby.barred.until > serverNow() ? lobby.barred : null;
+  $("bar-banner").hidden = !bar;
+  if (bar) {
+    const inside = bar.loc === view.here;
+    $("bar-text").textContent = inside
+      ? `The doors of the ${PLACES[bar.loc]?.name} are barred — you're locked in!`
+      : `The doors of the ${PLACES[bar.loc]?.name} are barred.`;
+    $("bar-secs").textContent = `${Math.ceil((bar.until - serverNow()) / 1000)}s`;
+  }
   if (!alive && !$("wisp-art").innerHTML) {
     const self = playerOf(me);
     $("wisp-art").innerHTML = wispSVG({ lantern: self?.lantern, size: 42 });
@@ -705,7 +754,35 @@ function renderSituation(company) {
     });
     actions.append(b);
   }
+  // The Lamplighter's one look.
+  if (alive && mySpecial === "lamplighter" && view.canCheck && !view.fog) {
+    const people = company.filter((p) => !view.wisps.includes(p.id));
+    for (const p of people) {
+      const b = document.createElement("button");
+      b.className = "check-btn wide";
+      b.textContent = `Look into ${p.name}'s lantern`;
+      b.addEventListener("click", () => {
+        if (confirm(`You get one look all game. Look into ${p.name}'s lantern?`)) send({ t: "check", target: p.id });
+      });
+      actions.append(b);
+    }
+    if (people.length && !hint) hint = "Only you will see what their flame shows.";
+  }
+  // The Locksmith's bolts.
+  let boltWait = 0;
+  if (alive && mySpecial === "locksmith" && view.barReadyAtLocal != null) {
+    boltWait = Math.max(0, view.barReadyAtLocal - Date.now());
+    const b = document.createElement("button");
+    b.className = "bar-btn wide";
+    b.disabled = boltWait > 0 || !!bar;
+    b.textContent = bar ? "The doors are barred" : boltWait > 0 ? `Bar the doors · ready in ${Math.ceil(boltWait / 1000)}s` : `Bar the doors of the ${PLACES[view.here]?.name}`;
+    b.addEventListener("click", () => send({ t: "bar" }));
+    actions.append(b);
+  }
+
   clearInterval(snuffTimer);
+  snuffTimer = null;
+  if (bar || (boltWait > 0 && boltWait < 60_000)) snuffTimer = setInterval(() => renderSituation(company), 1000);
   if (alive && shade && lobby.phase === "playing") {
     const targets = company.filter((p) => !allies.includes(p.id) && !view.wisps.includes(p.id));
     const wait = Math.max(0, (view.snuffReadyAtLocal ?? 0) - Date.now());
@@ -725,7 +802,7 @@ function renderSituation(company) {
       : `You're alone with ${targets[0].name}. Nobody would see.`;
     else if (targets.length > 1 && !hint) hint = `${targets.length} Keepers here — anyone left standing would see you.`;
     const fogWait = view.fogReadyAt ? view.fogReadyAt - serverNow() : 0;
-    if ((targets.length && wait > 0) || (!fogOn && fogWait > 0)) snuffTimer = setInterval(() => renderSituation(company), 1000);
+    if (((targets.length && wait > 0) || (!fogOn && fogWait > 0)) && !snuffTimer) snuffTimer = setInterval(() => renderSituation(company), 1000);
   }
   $("hint").textContent = hint;
   $("hint").hidden = !hint;
@@ -926,6 +1003,11 @@ function renderQuick() {
   for (const e of mySaw.slice().reverse()) {
     if (e.kind === "snuff" && playerOf(e.who) && !playerOf(e.who).adrift) lines.push(`I saw ${nameOf(e.who)} snuff ${nameOf(e.victim)}!`);
     if (e.kind === "lamp" && playerOf(e.who) && !playerOf(e.who).snuffed) lines.push(`${nameOf(e.who)} lit the great lamp — they're a Keeper.`);
+  }
+  if (myCheck && playerOf(myCheck.who) && !playerOf(myCheck.who).adrift) {
+    lines.unshift(myCheck.role === "shade"
+      ? `I'm the Lamplighter. ${nameOf(myCheck.who)}'s flame burns cold — a Shade!`
+      : `I'm the Lamplighter. ${nameOf(myCheck.who)}'s flame burns true.`);
   }
   const trail = [...new Set(myTrail.slice(-3).reverse())].map((l) => PLACES[l]?.name).filter(Boolean);
   if (trail.length) lines.push(`I was at the ${trail.reverse().join(", then the ")}.`);
@@ -1194,7 +1276,7 @@ function renderFates(r) {
     name.textContent = (p?.name ?? "Someone") + (s.id === me ? " (you)" : "");
     const role = document.createElement("span");
     role.className = "role-pill " + s.role;
-    role.textContent = s.role === "shade" ? "Shade" : "Keeper";
+    role.textContent = (s.role === "shade" ? "Shade" : "Keeper") + (s.special === "lamplighter" ? " · Lamplighter" : s.special === "locksmith" ? " · Locksmith" : "");
     const line = document.createElement("span");
     line.className = "fate-line";
     const what = s.fate === "survived" ? "Made it through the night"
@@ -1268,6 +1350,8 @@ function renderTale(r) {
       spared: "The town couldn't agree. Nobody was set adrift.",
       fog: `${n(e.who)} called the fog`,
       relight: `${n(e.who)} relit the great lamp`,
+      check: `${n(e.who)}, the Lamplighter, looked into ${n(e.victim)}'s lantern — ${e.wasShade ? "cold!" : "true"}`,
+      bar: `${n(e.who)}, the Locksmith, barred the doors of the ${where(e.loc)}`,
       end: r.winner === "keepers" ? "Dawn. The Keepers win." : "Darkness. The Shades win.",
     }[e.kind];
     if (!text) continue;
@@ -1608,6 +1692,7 @@ function renderSettings(isHost) {
     }
   };
   pick("set-public", !!st.public);
+  pick("set-specials", st.specials !== false);
   pick("set-shades", st.shades, (v) => Number(v) > cap);
   pick("set-meeting", st.meeting);
   pick("set-tasks", st.tasks);
@@ -1642,6 +1727,7 @@ function initLobby() {
   for (const b of document.querySelectorAll("#set-meeting button")) b.addEventListener("click", () => send({ t: "settings", meeting: b.dataset.value }));
   for (const b of document.querySelectorAll("#set-tasks button")) b.addEventListener("click", () => send({ t: "settings", tasks: Number(b.dataset.value) }));
   for (const b of document.querySelectorAll("#set-public button")) b.addEventListener("click", () => send({ t: "settings", public: b.dataset.value === "true" }));
+  for (const b of document.querySelectorAll("#set-specials button")) b.addEventListener("click", () => send({ t: "settings", specials: b.dataset.value === "true" }));
   $("start").addEventListener("click", () => send({ t: "start" }));
   const leave = () => {
     leaving = true;

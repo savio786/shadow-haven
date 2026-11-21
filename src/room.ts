@@ -13,16 +13,17 @@ import {
   BOT_NAMES, CHAT_MAX, FIRST_SNUFF_MS, FOG_COOLDOWN_MS, FOG_FIRST_MS, FOG_MS, GATHER_MS, LANTERNS, MAX_PLAYERS, MIN_PLAYERS,
   MOVE_COOLDOWN_MS, NAME_MAX, RESULT_MS, REVEAL_MS, SHAPES, SNUFF_COOLDOWN_MS, shadeCount,
   DEFAULT_SETTINGS, MEETING_PACE, TASKS_MIN, TASKS_MAX,
+  BAR_MS, BAR_COOLDOWN_MS, FIRST_BAR_MS, LAMPLIGHTER_MIN_PLAYERS, type Special,
   AUTO_START_MS, AUTO_START_GRACE_MS, AUTO_START_MAX_MS, AUTO_START_FILL,
   type ChatLine, type ClientMsg, type GameResult, type MatchEvent, type Meeting, type Phase, type PlayerSummary,
   type BotLevel, type PublicPlayer, type PublicTask, type Role, type ServerMsg, type Settings,
 } from "./shared";
 import { LOCATIONS, PATHS, START, adjacent, isLoc, route, type Loc } from "./harbor";
 import {
-  chooseFog, chooseRelight, chooseReport, chooseSnuff, decide, foundCold, newBrain, observe, remember, type Brain,
+  chooseBar, chooseCheck, chooseFog, chooseRelight, chooseReport, chooseSnuff, decide, foundCold, newBrain, observe, remember, type Brain,
 } from "./bots";
 import { TASKS, assignTasks, checkAnswer, makeChallenge, type Attempt, type Task } from "./tasks";
-import { chooseVote, mentions, tally, type MindContext } from "./minds";
+import { PLACE_NAMES, chooseVote, mentions, tally, type MindContext } from "./minds";
 import { AiGate, DEFAULT_MODEL, speak, write } from "./ai";
 import { cleanTale, computeHonors, fallbackTale, taleFacts, talePrompt } from "./chronicle";
 import type { GameRecord, Outcome, Why } from "./stats";
@@ -48,6 +49,9 @@ interface Player {
   stats?: PlayerStats;           // this game only
   snuffedAt?: Loc | null;
   snuffReadyAt: number;          // Shades: can't snuff again before this
+  special?: Special | null;      // secret, like the role
+  checkUsed?: boolean;           // the Lamplighter has had their look
+  barReadyAt?: number;           // the Locksmith can't bar the doors again before this
   attempt?: Attempt;             // a task mini-game in progress (humans)
   brain?: Brain;                 // bots only
   working?: { loc: Loc; until: number }; // a bot busy on a task
@@ -83,6 +87,7 @@ interface RoomState {
   fogUntil: number | null;       // the Shades' fog is down until then
   fogReadyAt: number;            // the Shades can call the fog again from then
   autoStartAt: number | null;     // a public lobby starts by itself then
+  barred: { loc: Loc; until: number } | null; // doors barred by the Locksmith
   firstArrivalAt: number | null;  // when the first person sat down in this public lobby
   aiLines: number;               // this game's bot lines by the AI…
   fallbackLines: number;         // …and by the built-in fallback (for the play statistics)
@@ -103,7 +108,7 @@ function emptyRoom(): RoomState {
     revealEndsAt: null, result: null, cold: [], meeting: null, revealed: [], votes: {}, chatSeq: 0,
     log: [], gameNo: 0, startedAt: 0,
     settings: { ...DEFAULT_SETTINGS }, fogUntil: null, fogReadyAt: 0,
-    aiLines: 0, fallbackLines: 0, autoStartAt: null, firstArrivalAt: null,
+    aiLines: 0, fallbackLines: 0, autoStartAt: null, firstArrivalAt: null, barred: null,
   };
 }
 
@@ -263,6 +268,8 @@ export class Room extends DurableObject<Env> {
       case "settings": return this.onSettings(ws, me, msg);
       case "fog": return this.onFog(ws, me);
       case "relight": return this.onRelight(ws, me);
+      case "check": return this.onCheck(ws, me, msg.target);
+      case "bar": return this.onBar(ws, me);
       case "move": return this.onMove(ws, me, msg.to);
       case "taskStart": return this.onTaskStart(ws, me, msg.id);
       case "taskDone": return this.onTaskDone(ws, me, msg);
@@ -315,6 +322,11 @@ export class Room extends DurableObject<Env> {
 
     if (s.phase === "meeting" && s.meeting) {
       if (this.meetingTick(now)) lobbyChanged = true;
+    }
+
+    if (s.phase === "playing" && s.barred && now >= s.barred.until) {
+      this.unbar(now);
+      lobbyChanged = true;
     }
 
     if (s.phase === "playing" && s.fogUntil && now >= s.fogUntil) {
@@ -546,7 +558,17 @@ export class Room extends DurableObject<Env> {
       delete p.attempt;
       delete p.working;
       if (p.isBot) p.brain = newBrain(playFrom);
+      p.special = null;
+      p.checkUsed = false;
+      p.barReadyAt = playFrom + FIRST_BAR_MS;
     }
+    if (this.state.settings.specials) {
+      const keepers = shuffle(this.state.players.filter((p) => p.role === "keeper"));
+      const shadesNow = shuffle(this.state.players.filter((p) => p.role === "shade"));
+      if (this.state.players.length >= LAMPLIGHTER_MIN_PLAYERS && keepers[0]) keepers[0].special = "lamplighter";
+      if (shadesNow[0]) shadesNow[0].special = "locksmith";
+    }
+    this.state.barred = null;
     this.state.log = [];
     this.state.aiLines = 0;
     this.state.fallbackLines = 0;
@@ -594,6 +616,7 @@ export class Room extends DurableObject<Env> {
   private resetToLobby() {
     this.state.phase = "lobby";
     this.state.fogUntil = null;
+    this.state.barred = null;
     this.state.revealEndsAt = null;
     this.state.result = null;
     this.state.cold = [];
@@ -626,6 +649,9 @@ export class Room extends DurableObject<Env> {
     if (now < me.readyAt) {
       // Too soon: just remind them where they are and when they can go.
       return this.sendView(ws, me);
+    }
+    if (this.isBarred(me.loc, to, now)) {
+      return this.send(ws, { t: "error", code: "barred", text: "The doors are barred — nobody gets in or out." });
     }
     this.moveTo(me, to, now);
     await this.scheduleAlarm(); // make sure the move gets saved soon
@@ -732,12 +758,22 @@ export class Room extends DurableObject<Env> {
         } else if (this.state.fogUntil && bot.role === "keeper" && !bot.working && now >= bot.readyAt && chooseRelight("keeper", level)) {
           // Head for the lamp.
           const next = route(bot.loc, "lighthouse")[0];
-          if (next) {
+          if (next && !this.isBarred(bot.loc, next, now)) {
             this.moveTo(bot, next, now);
             bot.brain.nextMoveAt = now + MOVE_COOLDOWN_MS + 300;
             continue;
           }
         }
+        // The Lamplighter looks into a lantern; the Locksmith bars the doors.
+        if (bot.special === "lamplighter" && !bot.checkUsed) {
+          const target = chooseCheck(bot.brain, this.visibleTo(bot), level, now);
+          const t = this.player(target);
+          if (t) this.check(bot, t, now);
+        }
+        if (bot.special === "locksmith" && !this.state.barred && now >= (bot.barReadyAt ?? 0)) {
+          if (chooseBar(this.visibleTo(bot), allies, now >= bot.snuffReadyAt - 4000, level)) this.bar(bot, now);
+        }
+
         // A Shade alone with a Keeper strikes.
         if (bot.role === "shade" && now >= bot.snuffReadyAt) {
           const target = chooseSnuff(this.visibleTo(bot), allies, level);
@@ -756,7 +792,7 @@ export class Room extends DurableObject<Env> {
       const todo = bot.alive || bot.role === "keeper" ? bot.tasks.filter((t) => !t.done).map((t) => t.loc) : [];
       const choice = decide(bot.brain, bot.loc, role, bot.alive ? allies : [], now, todo, !bot.alive);
       if (choice.work) bot.working = { loc: choice.work, until: now + choice.dwellMs };
-      else if (choice.to && adjacent(bot.loc, choice.to) && now >= bot.readyAt) this.moveTo(bot, choice.to, now);
+      else if (choice.to && adjacent(bot.loc, choice.to) && now >= bot.readyAt && !this.isBarred(bot.loc, choice.to, now)) this.moveTo(bot, choice.to, now);
       bot.brain.nextMoveAt = now + Math.max(choice.dwellMs, MOVE_COOLDOWN_MS);
       this.dirty = true;
     }
@@ -793,6 +829,10 @@ export class Room extends DurableObject<Env> {
     if (msg.public !== undefined) {
       if (typeof msg.public !== "boolean") return bad();
       next.public = msg.public;
+    }
+    if (msg.specials !== undefined) {
+      if (typeof msg.specials !== "boolean") return bad();
+      next.specials = msg.specials;
     }
     this.state.settings = next;
     await this.save();
@@ -851,6 +891,73 @@ export class Room extends DurableObject<Env> {
   /** In the fog, living Keepers see shapes, not faces. */
   private fogHides(viewer: Player) {
     return !!this.state.fogUntil && viewer.alive && viewer.role === "keeper";
+  }
+
+  // ---------- Special roles: the Lamplighter and the Locksmith ----------
+
+  /** The Lamplighter looks once into the lantern of someone standing with them. */
+  private async onCheck(ws: WebSocket, me: Player, targetId: unknown) {
+    const target = this.player(String(targetId ?? ""));
+    if (this.state.phase !== "playing" || me.special !== "lamplighter" || !me.alive) {
+      return this.send(ws, { t: "error", code: "cant_check", text: "You can't do that." });
+    }
+    if (me.checkUsed) return this.send(ws, { t: "error", code: "used", text: "You've already had your look." });
+    if (this.fogHides(me)) return this.send(ws, { t: "error", code: "fog", text: "You can't make out faces in the fog." });
+    if (!target || target.id === me.id || !target.alive || target.loc !== me.loc) {
+      return this.send(ws, { t: "error", code: "bad_target", text: "They aren't here." });
+    }
+    this.check(me, target, Date.now());
+    await this.save();
+  }
+
+  private check(by: Player, target: Player, now: number) {
+    by.checkUsed = true;
+    const shade = target.role === "shade";
+    this.logEvent({ kind: "check", who: by.id, victim: target.id, loc: by.loc!, wasShade: shade });
+    if (by.brain) remember(by.brain, { kind: "checked", who: target.id, loc: by.loc!, at: now, shade });
+    for (const ws of this.socketsByPlayer().get(by.id) ?? []) {
+      this.send(ws, { t: "checked", who: target.id, role: target.role! });
+      this.sendView(ws, by);
+    }
+    this.dirty = true;
+  }
+
+  /** The Locksmith bars the doors of the place they stand in. Everyone hears the bolts. */
+  private async onBar(ws: WebSocket, me: Player) {
+    const now = Date.now();
+    if (this.state.phase !== "playing" || me.special !== "locksmith" || !me.alive || !me.loc) {
+      return this.send(ws, { t: "error", code: "cant_bar", text: "You can't do that." });
+    }
+    if (this.state.barred) return this.send(ws, { t: "error", code: "barred", text: "Some doors are already barred." });
+    if (now < (me.barReadyAt ?? 0)) return this.send(ws, { t: "error", code: "cooldown", text: "The bolts aren't ready yet." });
+    this.bar(me, now);
+    await this.save();
+    this.broadcastLobby();
+    await this.scheduleAlarm();
+  }
+
+  private bar(by: Player, now: number) {
+    const loc = by.loc!;
+    this.state.barred = { loc, until: now + BAR_MS };
+    by.barReadyAt = now + BAR_MS + BAR_COOLDOWN_MS;
+    this.logEvent({ kind: "bar", who: by.id, loc });
+    this.dirty = true;
+    this.broadcast({ t: "notice", text: `Bolts slam shut: the doors of ${PLACE_NAMES[loc]} are barred!` });
+    this.refresh([loc], now);
+  }
+
+  private unbar(now: number) {
+    const b = this.state.barred;
+    if (!b) return;
+    this.state.barred = null;
+    this.dirty = true;
+    this.refresh([b.loc], now);
+  }
+
+  /** Is the way between these two places blocked by barred doors? */
+  private isBarred(from: Loc, to: Loc, now: number) {
+    const b = this.state.barred;
+    return !!b && now < b.until && (b.loc === from || b.loc === to);
   }
 
   // ---------- Snuffing, cold lanterns and the bell ----------
@@ -938,6 +1045,7 @@ export class Room extends DurableObject<Env> {
     s.phase = "meeting";
     s.votes = {};
     s.fogUntil = null; // the bell cuts through the fog
+    s.barred = null;   // and everyone walks out to the bell
     s.meeting = {
       kind,
       reporter: reporter.id,
@@ -1074,7 +1182,7 @@ export class Room extends DurableObject<Env> {
     const s = this.state;
     const m = s.meeting!;
     return {
-      self: { id: bot.id, name: bot.name, role: bot.role!, personality: bot.brain!.personality, alive: bot.alive },
+      self: { id: bot.id, name: bot.name, role: bot.role!, personality: bot.brain!.personality, alive: bot.alive, special: bot.special ?? null },
       brain: bot.brain!,
       allies: this.alliesOf(bot),
       names: Object.fromEntries(s.players.map((p) => [p.id, p.name])),
@@ -1205,6 +1313,7 @@ export class Room extends DurableObject<Env> {
     for (const p of s.players) {
       p.readyAt = now;
       if (p.role === "shade") p.snuffReadyAt = Math.max(p.snuffReadyAt, now + FIRST_SNUFF_MS);
+      if (p.special === "locksmith") p.barReadyAt = Math.max(p.barReadyAt ?? 0, now + FIRST_BAR_MS);
       if (p.brain) p.brain.nextMoveAt = now + 600 + Math.random() * 2500;
     }
     this.dirty = true;
@@ -1367,6 +1476,7 @@ export class Room extends DurableObject<Env> {
     const players: PlayerSummary[] = s.players.filter((p) => p.role).map((p) => ({
       id: p.id,
       role: p.role!,
+      special: p.special ?? null,
       fate: p.adrift ? "adrift" : p.alive ? "survived" : "snuffed",
       where: p.snuffedAt ?? null,
       tasksDone: p.stats?.tasks ?? 0,
@@ -1426,6 +1536,8 @@ export class Room extends DurableObject<Env> {
       fog: this.fogHides(p),
       shapes: this.visibleTo(p).length,
       fogReadyAt: p.role === "shade" ? this.state.fogReadyAt : null,
+      canCheck: p.special === "lamplighter" && !p.checkUsed && p.alive,
+      barReadyAt: p.special === "locksmith" ? (p.barReadyAt ?? 0) : null,
       cold: this.state.cold.filter((c) => c.loc === p.loc).map((c) => c.victim),
       alive: p.alive,
       readyAt: p.readyAt,
@@ -1503,7 +1615,7 @@ export class Room extends DurableObject<Env> {
     const allies = p.role === "shade"
       ? this.state.players.filter((o) => o.role === "shade" && o.id !== p.id).map((o) => o.id)
       : [];
-    this.send(ws, { t: "role", role: p.role, allies });
+    this.send(ws, { t: "role", role: p.role, allies, special: p.special ?? null });
   }
 
   private lobbyMsg(ignore?: WebSocket): ServerMsg {
@@ -1525,6 +1637,7 @@ export class Room extends DurableObject<Env> {
       settings: s.settings,
       fogUntil: s.phase === "playing" ? s.fogUntil : null,
       autoStartAt: s.phase === "lobby" ? s.autoStartAt : null,
+      barred: s.phase === "playing" ? s.barred : null,
       players: this.state.players.map((p) => ({
         id: p.id,
         name: p.name,
@@ -1619,6 +1732,7 @@ export class Room extends DurableObject<Env> {
     const times: number[] = [];
     if (s.revealEndsAt) times.push(s.revealEndsAt);
     if (s.phase === "lobby" && s.autoStartAt) times.push(s.autoStartAt);
+    if (s.barred) times.push(s.barred.until);
     if (s.fogUntil) times.push(s.fogUntil);
     if (s.meeting) {
       times.push(s.meeting.stageEndsAt);
