@@ -10,8 +10,9 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./worker";
 import {
-  BOT_NAMES, CHAT_MAX, DISCUSS_MS, FIRST_SNUFF_MS, FOG_COOLDOWN_MS, FOG_FIRST_MS, FOG_MS, GATHER_MS, LANTERNS, MAX_PLAYERS, MIN_PLAYERS,
-  MOVE_COOLDOWN_MS, NAME_MAX, RESULT_MS, REVEAL_MS, SHAPES, SNUFF_COOLDOWN_MS, VOTE_MS, shadeCount,
+  BOT_NAMES, CHAT_MAX, FIRST_SNUFF_MS, FOG_COOLDOWN_MS, FOG_FIRST_MS, FOG_MS, GATHER_MS, LANTERNS, MAX_PLAYERS, MIN_PLAYERS,
+  MOVE_COOLDOWN_MS, NAME_MAX, RESULT_MS, REVEAL_MS, SHAPES, SNUFF_COOLDOWN_MS, shadeCount,
+  DEFAULT_SETTINGS, MEETING_PACE, TASKS_MIN, TASKS_MAX,
   type ChatLine, type ClientMsg, type GameResult, type MatchEvent, type Meeting, type Phase, type PlayerSummary,
   type BotLevel, type PublicPlayer, type PublicTask, type Role, type ServerMsg, type Settings,
 } from "./shared";
@@ -98,7 +99,7 @@ function emptyRoom(): RoomState {
     code: "", created: false, createdAt: 0, phase: "lobby", hostId: null, players: [],
     revealEndsAt: null, result: null, cold: [], meeting: null, revealed: [], votes: {}, chatSeq: 0,
     log: [], gameNo: 0, startedAt: 0,
-    settings: { botLevel: "normal", auto: false }, fogUntil: null, fogReadyAt: 0,
+    settings: { ...DEFAULT_SETTINGS }, fogUntil: null, fogReadyAt: 0,
     aiLines: 0, fallbackLines: 0,
   };
 }
@@ -149,6 +150,8 @@ export class Room extends DurableObject<Env> {
       if (env.DEBUG_STATS === "on") Object.assign(this.meter, await ctx.storage.get("meter"));
       // Fill in any fields added since the room was saved.
       this.state = { ...emptyRoom(), ...saved };
+      // Rooms saved before newer settings existed get the defaults for them.
+      this.state.settings = { ...DEFAULT_SETTINGS, ...this.state.settings };
       this.state.players = this.state.players.map((p) => ({
         ...p, role: p.role ?? null, loc: p.loc ?? null, readyAt: p.readyAt ?? 0, tasks: p.tasks ?? [],
         alive: p.alive ?? true, snuffReadyAt: p.snuffReadyAt ?? 0,
@@ -504,14 +507,14 @@ export class Room extends DurableObject<Env> {
   private async startGame() {
     // Pick the Shades uniformly at random from everyone, bots included.
     const order = shuffle(this.state.players.map((p) => p.id));
-    const shades = new Set(order.slice(0, shadeCount(this.state.players.length)));
+    const shades = new Set(order.slice(0, shadeCount(this.state.players.length, this.state.settings.shades)));
     const now = Date.now();
     const playFrom = now + REVEAL_MS;
     for (const p of this.state.players) {
       p.role = shades.has(p.id) ? "shade" : "keeper";
       p.loc = START;
       p.readyAt = playFrom;
-      p.tasks = assignTasks();
+      p.tasks = assignTasks(this.state.settings.tasks);
       p.alive = true;
       p.adrift = false;
       p.bellUsed = false;
@@ -739,10 +742,33 @@ export class Room extends DurableObject<Env> {
 
   // ---------- Room settings ----------
 
+  /** Talk and vote time for this room's meetings. */
+  private pace() {
+    return MEETING_PACE[this.state.settings.meeting] ?? MEETING_PACE.normal;
+  }
+
   private async onSettings(ws: WebSocket, me: Player, msg: Extract<ClientMsg, { t: "settings" }>) {
     if (!this.requireHost(ws, me) || !this.requireLobby(ws)) return;
-    if (!LEVELS.includes(msg.botLevel)) return this.send(ws, { t: "error", code: "bad_setting", text: "Unknown setting." });
-    this.state.settings = { botLevel: msg.botLevel, auto: !!msg.auto };
+    const bad = () => this.send(ws, { t: "error", code: "bad_setting", text: "Unknown setting." });
+    const next = { ...this.state.settings };
+    if (msg.botLevel !== undefined) {
+      if (!LEVELS.includes(msg.botLevel)) return bad();
+      next.botLevel = msg.botLevel;
+      next.auto = !!msg.auto;
+    }
+    if (msg.shades !== undefined) {
+      if (!Number.isInteger(msg.shades) || msg.shades < 0 || msg.shades > 3) return bad();
+      next.shades = msg.shades;
+    }
+    if (msg.meeting !== undefined) {
+      if (!(msg.meeting in MEETING_PACE)) return bad();
+      next.meeting = msg.meeting;
+    }
+    if (msg.tasks !== undefined) {
+      if (!Number.isInteger(msg.tasks) || msg.tasks < TASKS_MIN || msg.tasks > TASKS_MAX) return bad();
+      next.tasks = msg.tasks;
+    }
+    this.state.settings = next;
     await this.save();
     this.broadcastLobby();
   }
@@ -894,6 +920,7 @@ export class Room extends DurableObject<Env> {
       snuffed: s.players.filter((p) => !p.alive && !p.adrift).map((p) => p.id),
       stage: "gather",
       stageEndsAt,
+      stageMs: stageEndsAt - now,
       endsAt: stageEndsAt,
       chat: [],
       voted: [],
@@ -932,7 +959,7 @@ export class Room extends DurableObject<Env> {
     let changed = false;
 
     if (m.stage === "gather" && now >= m.stageEndsAt) {
-      this.setStage("discuss", now + DISCUSS_MS);
+      this.setStage("discuss", now + this.pace().discuss);
       this.pushChat("", "Talk it over. Who do you suspect — and why?");
       this.scheduleBotTalk(now);
       changed = true;
@@ -975,6 +1002,7 @@ export class Room extends DurableObject<Env> {
   private setStage(stage: Meeting["stage"], endsAt: number) {
     const m = this.state.meeting!;
     m.stage = stage;
+    m.stageMs = Math.max(0, endsAt - Date.now());
     m.stageEndsAt = endsAt;
     m.endsAt = endsAt;
     this.dirty = true;
@@ -989,7 +1017,7 @@ export class Room extends DurableObject<Env> {
     }
     // Some speak again later, once there's more to react to.
     for (const b of bots) {
-      if (Math.random() < 0.5) this.botTurns.push({ id: b.id, at: now + DISCUSS_MS * (0.55 + Math.random() * 0.3) });
+      if (Math.random() < 0.5) this.botTurns.push({ id: b.id, at: now + this.pace().discuss * (0.55 + Math.random() * 0.3) });
     }
   }
 
@@ -1086,10 +1114,10 @@ export class Room extends DurableObject<Env> {
   }
 
   private startVote(now: number) {
-    this.setStage("vote", now + VOTE_MS);
+    this.setStage("vote", now + this.pace().vote);
     this.pushChat("", "Time to vote. Pick who to set adrift — or skip.");
     for (const b of this.state.players) {
-      if (b.isBot && b.alive) this.botVotes.push({ id: b.id, at: now + 2500 + Math.random() * (VOTE_MS * 0.5) });
+      if (b.isBot && b.alive) this.botVotes.push({ id: b.id, at: now + 2500 + Math.random() * (this.pace().vote * 0.5) });
     }
   }
 
@@ -1461,7 +1489,7 @@ export class Room extends DurableObject<Env> {
       min: MIN_PLAYERS,
       max: MAX_PLAYERS,
       shades: s.phase === "lobby"
-        ? shadeCount(Math.max(s.players.length, MIN_PLAYERS))
+        ? shadeCount(Math.max(s.players.length, MIN_PLAYERS), s.settings.shades)
         : s.players.filter((p) => p.role === "shade").length,
       revealEndsAt: s.revealEndsAt,
       progress: ["playing", "meeting", "ended"].includes(s.phase) ? this.progress() : null,

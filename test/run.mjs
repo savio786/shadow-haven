@@ -13,4 +13,5 @@ await import("./fog.test.mjs");
 await import("./end.test.mjs");
 await import("./hardening.test.mjs");
 await import("./stats.test.mjs");
+await import("./settings.test.mjs");
 process.exit(process.exitCode ?? 0);

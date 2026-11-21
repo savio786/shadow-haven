@@ -798,7 +798,7 @@ function renderMeeting() {
 
 function startTimer(m) {
   cancelAnimationFrame(timerRaf);
-  const total = STAGE_MS[m.stage] ?? 10000;
+  const total = m.stageMs || STAGE_MS[m.stage] || 10000;
   const fill = $("timer-fill");
   const secs = $("timer-secs");
   const tick = () => {
@@ -1470,6 +1470,7 @@ function renderLobby() {
 
   $("host-controls").hidden = !isHost;
   renderLevel(isHost, lobby.players.some((p) => p.isBot));
+  renderSettings(isHost);
   $("waiting").hidden = isHost;
   $("add-bot").disabled = count >= lobby.max;
   $("start").disabled = need > 0;
@@ -1503,6 +1504,34 @@ function renderLevel(isHost, hasBots) {
   $("level-note").textContent = auto + LEVEL_NOTE[st.botLevel] + (hasBots ? "" : " Add a bot to see it in action.");
 }
 
+const PACE_NAME = { quick: "quick meetings", normal: "normal meetings", long: "long meetings" };
+const maxShades = (n) => Math.max(1, Math.min(3, Math.floor(n / 3)));
+
+/** The host's game settings: everyone sees them, only the host can change them. */
+function renderSettings(isHost) {
+  const st = { shades: 0, meeting: "normal", tasks: 5, ...(lobby.settings ?? {}) };
+  const n = Math.max(lobby.players.length, MIN_PLAYERS);
+  const cap = maxShades(n);
+  const pick = (id, value, disable = () => false) => {
+    for (const b of document.querySelectorAll(`#${id} button`)) {
+      b.setAttribute("aria-checked", String(b.dataset.value === String(value)));
+      b.disabled = !isHost || disable(b.dataset.value);
+    }
+  };
+  pick("set-shades", st.shades, (v) => Number(v) > cap);
+  pick("set-meeting", st.meeting);
+  pick("set-tasks", st.tasks);
+  const shades = lobby.shades;
+  $("settings-summary").textContent = `${shades} Shade${shades === 1 ? "" : "s"} · ${PACE_NAME[st.meeting]} · ${st.tasks} tasks each`;
+  const notes = [];
+  if (st.shades > cap) notes.push(`${st.shades} Shades needs ${st.shades * 3}+ players, so this table gets ${cap}.`);
+  else if (isHost && cap < 3) notes.push(`${cap + 1} Shades needs ${(cap + 1) * 3}+ players.`);
+  if (st.tasks <= 3) notes.push("Fewer tasks: Keepers can win fast — the Shades must move quickly.");
+  if (st.tasks >= 6) notes.push("More tasks: longer nights and more time to hunt.");
+  if (!isHost) notes.unshift("The host sets these.");
+  $("settings-note").textContent = notes.join(" ");
+}
+
 function chooseLevel(level) {
   if (level === "auto") send({ t: "settings", botLevel: autoLevel(), auto: true });
   else send({ t: "settings", botLevel: level, auto: false });
@@ -1518,6 +1547,9 @@ function tag(text, kind) {
 function initLobby() {
   $("add-bot").addEventListener("click", () => send({ t: "addBot" }));
   for (const b of document.querySelectorAll("#bot-level button")) b.addEventListener("click", () => chooseLevel(b.dataset.level));
+  for (const b of document.querySelectorAll("#set-shades button")) b.addEventListener("click", () => send({ t: "settings", shades: Number(b.dataset.value) }));
+  for (const b of document.querySelectorAll("#set-meeting button")) b.addEventListener("click", () => send({ t: "settings", meeting: b.dataset.value }));
+  for (const b of document.querySelectorAll("#set-tasks button")) b.addEventListener("click", () => send({ t: "settings", tasks: Number(b.dataset.value) }));
   $("start").addEventListener("click", () => send({ t: "start" }));
   const leave = () => {
     leaving = true;

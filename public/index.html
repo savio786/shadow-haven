@@ -94,6 +94,37 @@
       <p id="level-note" class="muted small"></p>
     </div>
 
+    <details id="game-settings" class="game-settings">
+      <summary><span class="eyebrow">Game settings</span><span id="settings-summary" class="settings-summary"></span></summary>
+      <div class="setting-row">
+        <p class="setting-label">Shades</p>
+        <div id="set-shades" class="segmented" role="radiogroup" aria-label="Number of Shades">
+          <button role="radio" data-value="0">Auto</button>
+          <button role="radio" data-value="1">1</button>
+          <button role="radio" data-value="2">2</button>
+          <button role="radio" data-value="3">3</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <p class="setting-label">Meetings</p>
+        <div id="set-meeting" class="segmented" role="radiogroup" aria-label="Meeting length">
+          <button role="radio" data-value="quick">Quick</button>
+          <button role="radio" data-value="normal">Normal</button>
+          <button role="radio" data-value="long">Long</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <p class="setting-label">Tasks each</p>
+        <div id="set-tasks" class="segmented" role="radiogroup" aria-label="Tasks for each Keeper">
+          <button role="radio" data-value="3">3</button>
+          <button role="radio" data-value="4">4</button>
+          <button role="radio" data-value="5">5</button>
+          <button role="radio" data-value="6">6</button>
+        </div>
+      </div>
+      <p id="settings-note" class="muted small"></p>
+    </details>
+
     <div id="host-controls" class="host-controls" hidden>
       <button id="add-bot" class="ghost">+ Add a bot Keeper</button>
       <button id="start" class="primary">Start</button>

@@ -664,6 +664,19 @@ body.is-shade button.fog-btn:not(:disabled) { border-color: #9b7bff; color: #e3d
 .segmented button:disabled { cursor: default; opacity: 1; }
 .segmented button:disabled:not([aria-checked="true"]) { opacity: .5; }
 #level-note { margin: 6px 2px 0; }
+.game-settings { margin: 0 0 14px; border-radius: 14px; background: #ffffff05; border: 1px solid var(--line); text-align: left; }
+.game-settings > summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px; }
+.game-settings > summary::-webkit-details-marker { display: none; }
+.game-settings > summary .eyebrow { margin: 0; }
+.game-settings > summary::after { content: "▾"; color: var(--muted); transition: transform .2s; }
+.game-settings[open] > summary::after { transform: rotate(180deg); }
+.settings-summary { flex: 1; text-align: right; font-family: var(--sans); font-size: .82rem; color: var(--muted); }
+.setting-row { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 10px; padding: 0 14px 10px; }
+.setting-label { margin: 0; font-family: var(--sans); font-size: .86rem; color: var(--ink); }
+#set-meeting { grid-template-columns: repeat(3, 1fr); }
+#settings-note { margin: 0; padding: 0 14px 12px; min-height: 0; }
+#settings-note:empty { display: none; }
+@media (max-width: 360px) { .setting-row { grid-template-columns: 1fr; gap: 6px; } }
 
 /* ---------- XP and ranks ---------- */
 .xp { margin: 0 auto 16px; max-width: 380px; padding: 12px 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); text-align: left; }

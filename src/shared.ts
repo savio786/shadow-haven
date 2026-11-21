@@ -98,10 +98,25 @@ export const FOG_MS = 30_000;          // how long it lasts if nobody relights t
 export const FOG_COOLDOWN_MS = 60_000; // rest after it lifts
 
 export type BotLevel = "easy" | "normal" | "cunning";
+export type MeetingPace = "quick" | "normal" | "long";
 export interface Settings {
   botLevel: BotLevel;
-  auto: boolean;   // the host's device picked the level from their record
+  auto: boolean;        // the host's device picked the level from their record
+  shades: number;       // 0 = pick for the table size; else 1–3 (capped by table size)
+  meeting: MeetingPace; // how long the harbor talks and votes
+  tasks: number;        // tasks each, TASKS_MIN–TASKS_MAX
 }
+
+export const DEFAULT_SETTINGS: Settings = { botLevel: "normal", auto: false, shades: 0, meeting: "normal", tasks: 5 };
+export const TASKS_MIN = 3;
+export const TASKS_MAX = 6;
+
+/** Talk and vote time for each meeting pace. */
+export const MEETING_PACE: Record<MeetingPace, { discuss: number; vote: number }> = {
+  quick: { discuss: 30_000, vote: 20_000 },
+  normal: { discuss: 45_000, vote: 25_000 },
+  long: { discuss: 75_000, vote: 35_000 },
+};
 
 /** A meeting: gather at the bell, talk it over, vote, hear the verdict. */
 export const GATHER_MS = 6000;
@@ -135,6 +150,7 @@ export interface Meeting {
   snuffed: string[]; // everyone snuffed so far (now public)
   stage: MeetingStage;
   stageEndsAt: number;
+  stageMs: number;   // how long this stage lasts in all (for the timer ring)
   endsAt: number;    // same as stageEndsAt (kept for older clients)
   chat: ChatLine[];  // the most recent lines
   voted: string[];   // who has voted (not for whom, until the result)
@@ -142,8 +158,14 @@ export interface Meeting {
   result: VoteResult | null;
 }
 
-/** 4–6 Keepers → 1 Shade, 7–10 → 2 Shades. */
-export function shadeCount(players: number) {
+/** The most Shades a table can hold and still be a fair fight: a third of the players. */
+export function maxShades(players: number) {
+  return Math.max(1, Math.min(3, Math.floor(players / 3)));
+}
+
+/** How many Shades: the host's choice (capped by table size), or 1 for 4–6 players and 2 for 7–10. */
+export function shadeCount(players: number, wanted = 0) {
+  if (wanted >= 1) return Math.min(Math.floor(wanted), maxShades(players));
   return players >= 7 ? 2 : 1;
 }
 
@@ -169,7 +191,7 @@ export type ClientMsg =
   | { t: "start" }
   | { t: "endGame" }
   | { t: "playAgain" }
-  | { t: "settings"; botLevel: BotLevel; auto?: boolean }
+  | { t: "settings"; botLevel?: BotLevel; auto?: boolean; shades?: number; meeting?: MeetingPace; tasks?: number }
   | { t: "fog" }
   | { t: "relight" }
   | { t: "move"; to: string }

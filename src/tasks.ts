@@ -53,8 +53,8 @@ function shuffled<T>(xs: readonly T[]): T[] {
 }
 
 /** A random set of tasks in different places. */
-export function assignTasks(): Task[] {
-  return shuffled(LOCATIONS).slice(0, TASKS_PER_PLAYER).map((loc, i) => ({ id: `t${i}-${loc}`, loc, done: false }));
+export function assignTasks(count = TASKS_PER_PLAYER): Task[] {
+  return shuffled(LOCATIONS).slice(0, Math.min(count, LOCATIONS.length)).map((loc, i) => ({ id: `t${i}-${loc}`, loc, done: false }));
 }
 
 const FLAG_COLORS = ["#d94f4f", "#f2c14e", "#3f8fd9", "#f4f1e8", "#2f9e6a", "#22262f"];
