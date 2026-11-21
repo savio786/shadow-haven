@@ -2,7 +2,7 @@
 // The server issues each attempt as a challenge and checks the answer, the
 // place, and that it didn't finish faster than a person could.
 
-import { LOCATIONS, type Loc } from "./harbor";
+import { LOCATIONS, mapOf, type Loc, type MapId } from "./harbor";
 
 export type TaskKind = "timing" | "sequence" | "match" | "connect" | "mash" | "hold";
 
@@ -25,6 +25,11 @@ export const TASKS: Record<Loc, TaskDef> = {
 };
 
 export const TASKS_PER_PLAYER = 5;
+
+/** What a task is called on a given map (the mini-game stays the same). */
+export function taskName(map: MapId, loc: Loc) {
+  return mapOf(map).tasks[loc] ?? TASKS[loc].name;
+}
 
 export interface Task {
   id: string;

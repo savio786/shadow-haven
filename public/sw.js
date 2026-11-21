@@ -5,7 +5,7 @@
 // Network first, so players always get the newest version when online; the
 // stored copy is only the fallback. Bump VERSION to clear old copies.
 
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 const CACHE = `shadow-haven-${VERSION}`;
 const SHELL = [
   "/",

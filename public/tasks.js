@@ -4,6 +4,29 @@
 // Fastest plausible finish per kind (mirrors the server); we never submit sooner.
 const MIN_MS = { timing: 2500, sequence: 3000, match: 1500, connect: 2500, mash: 2000, hold: 3000 };
 
+// Each map words its mini-games its own way (the games themselves are the same).
+const WORDS = {
+  harbor: {
+    lightIt: "Light it", spark: "Catch the spark on the wick", candle: "Candle",
+    watch: "Watch the order the flames rise…", repeat: "Now light them in the same order.", gutter: "The flames gutter out. Watch again.",
+    signal: "Signal from the lighthouse", flag: "Flag", matchHint: "Raise the flag that matches the signal.",
+    knot: "Knot", next: (n) => `Tie knot ${n} next.`, held: "The net holds.", tieHint: "Tie the knots in order, 1 to 6.",
+    haul: "Haul the rope in", pull: "Pull!",
+    crank: "Hold to wind the clock", holdHint: "Press and hold to wind. Don't let go too soon.", wound: "Tick… tock. Wound.", slipped: "The spring slipped. Hold it the whole way.",
+  },
+  frostmere: {
+    lightIt: "Kindle it", spark: "Catch the ember in the brazier", candle: "Lamp",
+    watch: "Watch the order the ship's lamps glow…", repeat: "Now light them in the same order.", gutter: "The lamps flicker out. Watch again.",
+    signal: "The harbormaster's tally", flag: "Crate", matchHint: "Find the crate marked like the tally.",
+    knot: "Strap", next: (n) => `Clip strap ${n} next.`, held: "The harness is clear.", tieHint: "Untangle the harness: clip 1 to 6.",
+    haul: "Chip the ice", pull: "Chip!",
+    crank: "Hold to stoke the stove", holdHint: "Press and hold to stoke. Don't let go too soon.", wound: "The stove roars.", slipped: "The fire sputtered. Hold it the whole way.",
+  },
+};
+let W = WORDS.harbor;
+/** Which map's words the mini-games use. */
+export function setTaskWords(map) { W = WORDS[map] ?? WORDS.harbor; }
+
 const el = (tag, cls, html) => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -50,7 +73,7 @@ const GAMES = {
     const zone = el("div", "timing-zone");
     const spark = el("div", "timing-spark");
     track.append(zone, spark);
-    const btn = el("button", "primary wide", "Light it");
+    const btn = el("button", "primary wide", W.lightIt);
     stage.append(track, btn);
     let hits = 0;
     let zoneAt = 0;
@@ -60,7 +83,7 @@ const GAMES = {
       zone.style.width = data.zone * 100 + "%";
     };
     placeZone();
-    status.textContent = `Catch the spark on the wick — 0 of ${data.hits}`;
+    status.textContent = `${W.spark} — 0 of ${data.hits}`;
     let pos = 0, dir = 1, last = performance.now(), raf;
     const loop = (t) => {
       pos += dir * data.speed * ((t - last) / 1000);
@@ -76,7 +99,7 @@ const GAMES = {
         hits++;
         track.classList.add("hit");
         setTimeout(() => track.classList.remove("hit"), 250);
-        status.textContent = `Catch the spark on the wick — ${hits} of ${data.hits}`;
+        status.textContent = `${W.spark} — ${hits} of ${data.hits}`;
         if (hits >= data.hits) {
           cancelAnimationFrame(raf);
           btn.disabled = true;
@@ -98,7 +121,7 @@ const GAMES = {
     const row = el("div", "candles");
     const candles = Array.from({ length: data.candles }, (_, i) => {
       const b = el("button", "candle", `<svg viewBox="0 0 30 70" aria-hidden="true"><path class="c-flame" d="M15 4c5 7 5 13 0 17-5-4-5-10 0-17z"/><rect x="9" y="24" width="12" height="42" rx="2" class="c-wax"/></svg>`);
-      b.setAttribute("aria-label", `Candle ${i + 1}`);
+      b.setAttribute("aria-label", `${W.candle} ${i + 1}`);
       row.append(b);
       return b;
     });
@@ -113,11 +136,11 @@ const GAMES = {
     const show = () => {
       showing = true;
       input = [];
-      status.textContent = "Watch the order the flames rise…";
+      status.textContent = W.watch;
       data.order.forEach((c, k) => timers.push(setTimeout(() => flash(c), 400 + k * 650)));
       timers.push(setTimeout(() => {
         showing = false;
-        status.textContent = "Now light them in the same order.";
+        status.textContent = W.repeat;
       }, 400 + data.order.length * 650));
     };
     candles.forEach((b, i) => b.addEventListener("click", () => {
@@ -127,7 +150,7 @@ const GAMES = {
       const k = input.length - 1;
       if (input[k] !== data.order[k]) {
         shake(row);
-        status.textContent = "The flames gutter out. Watch again.";
+        status.textContent = W.gutter;
         timers.push(setTimeout(show, 900));
         showing = true;
         return;
@@ -146,11 +169,11 @@ const GAMES = {
   match(data, stage, status, finish) {
     const flag = (colors) => `<svg viewBox="0 0 60 40" aria-hidden="true">${colors
       .map((c, i) => `<rect y="${i * 13.33}" width="60" height="13.4" fill="${c}"/>`).join("")}<rect width="60" height="40" fill="none" stroke="#0005"/></svg>`;
-    const target = el("div", "flag-target", `<p class="eyebrow">Signal from the lighthouse</p>${flag(data.target)}`);
+    const target = el("div", "flag-target", `<p class="eyebrow">${W.signal}</p>${flag(data.target)}`);
     const opts = el("div", "flag-options");
     data.options.forEach((colors, i) => {
       const b = el("button", "flag-option", flag(colors));
-      b.setAttribute("aria-label", `Flag ${i + 1}`);
+      b.setAttribute("aria-label", `${W.flag} ${i + 1}`);
       b.addEventListener("click", () => {
         if (colors.join() === data.target.join()) {
           b.classList.add("right");
@@ -163,7 +186,7 @@ const GAMES = {
       });
       opts.append(b);
     });
-    status.textContent = "Raise the flag that matches the signal.";
+    status.textContent = W.matchHint;
     stage.append(target, opts);
     return () => {};
   },
@@ -183,7 +206,7 @@ const GAMES = {
       const g = document.createElementNS(ns, "g");
       g.classList.add("knot");
       g.setAttribute("role", "button");
-      g.setAttribute("aria-label", `Knot ${i + 1}`);
+      g.setAttribute("aria-label", `${W.knot} ${i + 1}`);
       g.innerHTML = `<circle cx="${p.x}" cy="${p.y}" r="6.5"/><text x="${p.x}" y="${p.y + 2.6}">${i + 1}</text>`;
       g.addEventListener("pointerdown", (e) => {
         e.preventDefault();
@@ -192,12 +215,12 @@ const GAMES = {
         tied.push(i);
         g.classList.add("tied");
         line.setAttribute("points", tied.map((k) => `${data.points[k].x},${data.points[k].y}`).join(" "));
-        status.textContent = tied.length < 6 ? `Tie knot ${tied.length + 1} next.` : "The net holds.";
+        status.textContent = tied.length < 6 ? W.next(tied.length + 1) : W.held;
         if (tied.length === 6) finish(tied);
       });
       svg.append(g);
     });
-    status.textContent = "Tie the knots in order, 1 to 6.";
+    status.textContent = W.tieHint;
     stage.append(svg);
     return () => {};
   },
@@ -206,14 +229,14 @@ const GAMES = {
   mash(data, stage, status, finish) {
     const coil = el("div", "rope-meter", `<span></span>`);
     const fill = coil.firstChild;
-    const btn = el("button", "primary wide big", "Pull!");
+    const btn = el("button", "primary wide big", W.pull);
     stage.append(coil, btn);
     let n = 0;
-    status.textContent = `Haul the rope in — 0 of ${data.pulls}`;
+    status.textContent = `${W.haul} — 0 of ${data.pulls}`;
     btn.addEventListener("click", () => {
       n++;
       fill.style.width = (n / data.pulls) * 100 + "%";
-      status.textContent = `Haul the rope in — ${Math.min(n, data.pulls)} of ${data.pulls}`;
+      status.textContent = `${W.haul} — ${Math.min(n, data.pulls)} of ${data.pulls}`;
       btn.classList.remove("tug"); void btn.offsetWidth; btn.classList.add("tug");
       if (n >= data.pulls) { btn.disabled = true; finish(null); }
     });
@@ -227,17 +250,17 @@ const GAMES = {
       <circle cx="50" cy="50" r="44" class="crank-fill" pathLength="100"/>
       <g class="crank-arm"><rect x="47" y="14" width="6" height="36" rx="3"/><circle cx="50" cy="16" r="7"/></g>
       <circle cx="50" cy="50" r="7" class="crank-hub"/></svg>`);
-    crank.setAttribute("aria-label", "Hold to wind the clock");
+    crank.setAttribute("aria-label", W.crank);
     const fill = crank.querySelector(".crank-fill");
     const arm = crank.querySelector(".crank-arm");
     stage.append(crank);
-    status.textContent = "Press and hold to wind. Don't let go too soon.";
+    status.textContent = W.holdHint;
     let start = 0, raf, done = false;
     const tick = (t) => {
       const k = Math.min(1, (t - start) / data.ms);
       fill.style.strokeDashoffset = String(100 - k * 100);
       arm.style.transform = `rotate(${k * 1080}deg)`;
-      if (k >= 1) { done = true; crank.disabled = true; status.textContent = "Tick… tock. Wound."; return finish(null); }
+      if (k >= 1) { done = true; crank.disabled = true; status.textContent = W.wound; return finish(null); }
       raf = requestAnimationFrame(tick);
     };
     const down = (e) => { if (done) return; e.preventDefault(); start = performance.now(); raf = requestAnimationFrame(tick); };
@@ -246,7 +269,7 @@ const GAMES = {
       cancelAnimationFrame(raf);
       fill.style.strokeDashoffset = "100";
       arm.style.transform = "";
-      if (start) status.textContent = "The spring slipped. Hold it the whole way.";
+      if (start) status.textContent = W.slipped;
       start = 0;
     };
     crank.addEventListener("pointerdown", down);

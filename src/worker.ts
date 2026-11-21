@@ -71,7 +71,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/health") {
-      return json({ ok: true, game: "Shadow Haven", version: "1.1.0" });
+      return json({ ok: true, game: "Shadow Haven", version: "1.3.0" });
     }
 
     if (url.pathname === "/api/stats" && request.method === "GET") {

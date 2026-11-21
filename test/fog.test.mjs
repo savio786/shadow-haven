@@ -9,7 +9,8 @@ await test("only the host sets how sharp the bots are, and only in the lobby", a
   const code = await createRoom();
   const host = await new Client(code, "Host").join();
   const guest = await new Client(code, "Guest").join();
-  assert.deepEqual(last(host, "lobby").settings, { botLevel: "normal", auto: false });
+  const st = last(host, "lobby").settings;
+  assert.deepEqual([st.botLevel, st.auto], ["normal", false]);
   guest.send({ t: "settings", botLevel: "cunning" });
   await guest.waitFor((m) => m.code === "not_host");
   host.send({ t: "settings", botLevel: "wizard" });

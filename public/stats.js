@@ -46,6 +46,10 @@ function render(d) {
   $("balance").innerHTML = d.byLevel.map((b) => splitBar(LEVEL[b.level], b, verdict(b))).join("")
     + splitBar("All games", { games: t.games, keepers: t.keepers, shades: t.shades, shadeWinPct: t.shadeWinPct, medianMinutes: t.medianMinutes }, verdict(t), true);
 
+  // Fairness, by map.
+  const MAP_NAME = { harbor: "The Harbor", frostmere: "Frostmere" };
+  $("maps").innerHTML = (d.byMap ?? []).map((b) => splitBar(MAP_NAME[b.map] ?? b.map, b, verdict(b))).join("");
+
   // People's own results.
   const ps = d.people.asShade, pk = d.people.asKeeper;
   $("p-shade").textContent = pctText(ps.winPct);
@@ -91,6 +95,8 @@ function render(d) {
     t.wrongVotePct !== null && `An innocent Keeper was set adrift in <strong>${pctText(t.wrongVotePct)}</strong> of games`,
     t.avgProgressPct !== null && `The harbor was <strong>${t.avgProgressPct}%</strong> lit by the end, on average`,
     d.ai.lines + d.ai.fallback > 0 && `<strong>${pctText(d.ai.aiPct)}</strong> of bot lines were written by the AI (the rest came from built-in lines)`,
+    d.openTables?.games > 0 && `<strong>${d.openTables.games}</strong> ${d.openTables.games === 1 ? "game was" : "games were"} played at open tables (Play now)`,
+    d.specials?.games > 0 && `The Lamplighter looked into <strong>${d.specials.looks}</strong> ${d.specials.looks === 1 ? "lantern" : "lanterns"}; the Locksmith barred doors <strong>${d.specials.bars}</strong> ${d.specials.bars === 1 ? "time" : "times"}`,
   ].filter(Boolean);
   $("facts").innerHTML = facts.map((f) => `<li>${f}</li>`).join("");
 

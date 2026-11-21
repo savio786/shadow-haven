@@ -844,3 +844,25 @@ body.app input, body.app textarea, body.app .chat { user-select: text; -webkit-u
 .harbor-map .padlock-pin circle { fill: #1d1830; stroke: #8a6fe6; stroke-width: 1.5; }
 .harbor-map .padlock-pin path, .harbor-map .padlock-pin rect { fill: none; stroke: #c9b8ff; stroke-width: 1.4; }
 .harbor-map .place.barred .building { opacity: .75; }
+
+/* ---------- Frostmere ---------- */
+.harbor-map.map-frostmere .ice { fill: #1c2c42; stroke: #3c5576; stroke-width: 1.5; }
+.harbor-map.map-frostmere .cracks path { fill: none; stroke: #4d6a8e; stroke-width: .9; opacity: .6; }
+.harbor-map.map-frostmere .aurora path { fill: none; stroke-width: 14; stroke-linecap: round; opacity: .55; filter: blur(3px); animation: aurora 9s ease-in-out infinite alternate; }
+.harbor-map.map-frostmere .aurora path + path { stroke-width: 9; animation-duration: 13s; }
+@keyframes aurora { from { transform: translateX(-10px); opacity: .35; } to { transform: translateX(12px); opacity: .65; } }
+.harbor-map.map-frostmere .flake { fill: #eef3fb; opacity: .7; animation: snowfall 8s linear infinite; }
+@keyframes snowfall { from { transform: translate(0, -300px); } to { transform: translate(14px, 300px); } }
+.harbor-map.map-frostmere .path { stroke: #36455f; }
+.harbor-map.map-frostmere .place .building .beacon-glow { opacity: 0; }
+.harbor-map.map-frostmere .place:is(.here, .next) .building .beacon-glow { opacity: 1; }
+.harbor-map.map-frostmere .flicker { transform-box: fill-box; transform-origin: 50% 100%; animation: flicker 1.6s ease-in-out infinite; }
+@keyframes flicker { 50% { transform: scaleY(1.12) scaleX(.94); } }
+.harbor-map.map-frostmere .smoke circle { animation: smoke 4s ease-out infinite; }
+@keyframes smoke { from { transform: translateY(0); opacity: .45; } to { transform: translateY(-8px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .harbor-map.map-frostmere .flake, .harbor-map.map-frostmere .aurora path, .harbor-map.map-frostmere .flicker, .harbor-map.map-frostmere .smoke circle { animation: none; }
+}
+
+.map-blurb { margin: -4px 14px 10px 116px; }
+@media (max-width: 360px) { .map-blurb { margin-left: 14px; } }

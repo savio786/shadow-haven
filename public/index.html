@@ -106,6 +106,14 @@
     <details id="game-settings" class="game-settings">
       <summary><span class="eyebrow">Game settings</span><span id="settings-summary" class="settings-summary"></span></summary>
       <div class="setting-row">
+        <p class="setting-label">Map</p>
+        <div id="set-map" class="segmented two" role="radiogroup" aria-label="Map">
+          <button role="radio" data-value="harbor">The Harbor</button>
+          <button role="radio" data-value="frostmere">Frostmere</button>
+        </div>
+      </div>
+      <p id="map-blurb" class="muted small map-blurb"></p>
+      <div class="setting-row">
         <p class="setting-label">Who can join</p>
         <div id="set-public" class="segmented two" role="radiogroup" aria-label="Who can join">
           <button role="radio" data-value="false">With the code</button>
@@ -183,7 +191,7 @@
     <header class="game-head">
       <div>
         <p class="eyebrow">Room <span id="game-code"></span></p>
-        <h2>The harbor at night</h2>
+        <h2 id="game-title">The harbor at night</h2>
       </div>
       <button id="peek" class="ghost peek" aria-pressed="false">Peek at my role</button>
     </header>
@@ -385,9 +393,9 @@
         <li><span class="howto-art" data-art="cold"></span>
           <div><strong>Find a cold lantern? Report it.</strong> That rings the Harbor Bell and everyone gathers. Share what you saw — and work out who the Shade is.</div></li>
         <li><span class="howto-art" data-art="fogcall"></span>
-          <div><strong>Beware the fog.</strong> Shades can hide every face for a while. Anyone can lift it by relighting the great lamp at the Lighthouse.</div></li>
+          <div><strong>Beware the fog.</strong> Shades can hide every face for a while. Anyone can lift it by relighting the great lamp at the Lighthouse (the great beacon on Beacon Hill, in Frostmere).</div></li>
         <li><span class="howto-art" data-art="lamp"></span>
-          <div><strong>Proof you can trust:</strong> only a real Keeper can light the great lamp at the Lighthouse. If you watch someone do it, they're a Keeper.</div></li>
+          <div><strong>Proof you can trust:</strong> only a real Keeper can light the great lamp (or the great beacon). If you watch someone do it, they're a Keeper.</div></li>
               <li><span class="howto-art" data-art="special"></span>
           <div><strong>Special roles.</strong> One Keeper may be the <em>Lamplighter</em>, who can look into one person's lantern to see if they're a Shade. One Shade may be the <em>Locksmith</em>, who can bar the doors of a place so nobody gets in or out for a while.</div></li>
       </ol>

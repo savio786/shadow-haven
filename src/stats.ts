@@ -34,7 +34,25 @@ export interface GameRecord {
   progress: number;      // share of Keeper tasks done, 0..1
   aiLines: number;       // bot lines written by the AI
   fallbackLines: number; // bot lines from the built-in fallback
+  map?: string;          // which map
+  public?: boolean;      // an open table (Play now)
+  specials?: boolean;    // special roles were on
+  pace?: string;         // meeting length
+  tasksEach?: number;
+  checks?: number;       // the Lamplighter looked
+  bars?: number;         // the Locksmith barred the doors
 }
+
+/** Columns added after the first release, with their defaults for older rows. */
+const LATER_COLUMNS: [string, string][] = [
+  ["map", "TEXT NOT NULL DEFAULT 'harbor'"],
+  ["public", "INTEGER NOT NULL DEFAULT 0"],
+  ["specials", "INTEGER NOT NULL DEFAULT 0"],
+  ["pace", "TEXT NOT NULL DEFAULT 'normal'"],
+  ["tasks_each", "INTEGER NOT NULL DEFAULT 5"],
+  ["checks", "INTEGER NOT NULL DEFAULT 0"],
+  ["bars", "INTEGER NOT NULL DEFAULT 0"],
+];
 
 const KEEP_DAYS = 400;
 const DAY = 86_400_000;
@@ -60,19 +78,26 @@ export class Stats extends DurableObject<Env> {
       ai_lines INTEGER NOT NULL, fallback_lines INTEGER NOT NULL
     )`);
     this.sql.exec("CREATE INDEX IF NOT EXISTS games_at ON games(at)");
+    const have = new Set(this.sql.exec("PRAGMA table_info(games)").toArray().map((c) => String(c.name)));
+    for (const [name, type] of LATER_COLUMNS) if (!have.has(name)) this.sql.exec(`ALTER TABLE games ADD COLUMN ${name} ${type}`);
   }
 
   /** Remember one game. Recording the same game twice keeps the first. */
   async record(r: GameRecord): Promise<void> {
     const at = n(r.at) || Date.now();
     this.sql.exec(
-      `INSERT OR IGNORE INTO games VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT OR IGNORE INTO games (id, at, day, outcome, why, level, auto, players, humans, bots, shades, human_shades,
+        duration_ms, meetings, bells, snuffs, shades_adrift, keepers_adrift, fogs, relights, progress, ai_lines, fallback_lines,
+        map, public, specials, pace, tasks_each, checks, bars)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       String(r.id).slice(0, 80), at, new Date(at).toISOString().slice(0, 10),
       r.outcome, r.why, String(r.level).slice(0, 12), r.auto ? 1 : 0,
       n(r.players), n(r.humans), n(r.bots), n(r.shades), n(r.humanShades),
       Math.round(n(r.durationMs)), n(r.meetings), n(r.bells), n(r.snuffs),
       n(r.shadesAdrift), n(r.keepersAdrift), n(r.fogs), n(r.relights),
       Math.max(0, Math.min(1, n(r.progress))), n(r.aiLines), n(r.fallbackLines),
+      String(r.map ?? "harbor").slice(0, 16), r.public ? 1 : 0, r.specials ? 1 : 0, String(r.pace ?? "normal").slice(0, 12),
+      n(r.tasksEach) || 5, n(r.checks), n(r.bars),
     );
     this.sql.exec("DELETE FROM games WHERE at < ?", Date.now() - KEEP_DAYS * DAY);
   }
@@ -133,6 +158,13 @@ export class Stats extends DurableObject<Env> {
       },
       endings: { tasks: why("tasks"), adrift: why("adrift"), dark: why("dark") },
       byLevel: ["easy", "normal", "cunning"].map((level) => ({ level, ...split(finished.filter((r) => r.level === level)) })),
+      byMap: ["harbor", "frostmere"].map((map) => ({ map, ...split(finished.filter((r) => r.map === map)) })),
+      openTables: { games: finished.filter((r) => Number(r.public) === 1).length, started: rows.filter((r) => Number(r.public) === 1).length },
+      specials: {
+        games: finished.filter((r) => Number(r.specials) === 1).length,
+        looks: rows.reduce((t, r) => t + Number(r.checks), 0),
+        bars: rows.reduce((t, r) => t + Number(r.bars), 0),
+      },
       byPlayers: [4, 5, 6, 7, 8, 9, 10]
         .map((players) => ({ players, ...split(finished.filter((r) => Number(r.players) === players)) }))
         .filter((b) => b.games > 0),

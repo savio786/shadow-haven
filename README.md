@@ -9,7 +9,7 @@ Live at **https://game2.sedigitaltransformation.com**
 ## Tech
 
 - **Cloudflare Workers** serves the frontend (`public/`, via Workers Static Assets) and the API (`/api/*`).
-- **Durable Objects** — one `Room` instance per game, addressed by its 4-letter room code.
+- **Durable Objects**: one `Room` instance per game, addressed by its 4-letter room code; one `Stats` (the Harbor Log) and one `Matchmaker` (Play now).
 - **TypeScript**, deployed with **Wrangler** from **GitHub Actions**.
 
 ```
@@ -17,21 +17,24 @@ public/          static frontend (HTML, CSS, SVG art)
 src/worker.ts    entry point: /api/health, POST /api/rooms, /api/room/:code[/ws], /api/stats
 src/room.ts      the Room Durable Object (one per game): lobby, players, bots
 src/shared.ts    constants and message types shared by server and client
-src/harbor.ts    the harbor's locations and paths, route finding
+src/harbor.ts    the maps (the Harbor, Frostmere): places, paths, tasks; route finding
 src/bots.ts      bot brains: personalities, memory, decisions
 src/tasks.ts     task definitions, challenges and answer checking
 src/minds.ts     how bots think in meetings: knowledge, prompts, fallback lines, votes
 src/ai.ts        Workers AI voices and the tale, with timeouts and fallback
 src/chronicle.ts end of the night: honors, the facts of the match, the tale
 src/stats.ts     the play statistics Durable Object (one anonymous line per game)
+src/matchmaker.ts quick match: the list of open public tables (Play now)
 public/app.js    browser client (home + lobby)
 public/stats.*   the Harbor Log page (/stats)
+public/sw.js     service worker (installable app, opens offline)
+public/manifest.webmanifest, public/icons/  app manifest and icons
 public/lanterns.js  original Lantern Keeper SVG art
-public/harbor.js original harbor map art
+public/harbor.js original map art (the Harbor, Frostmere)
 public/tasks.js  the six task mini-games
 public/lanterns.js  also: cold lanterns, wisps, the Harbor Bell, the drifting boat
 public/sound.js  synthesized sounds (Web Audio) and phone haptics, with mute
-test/            unit tests (bot brains, bot minds, chronicle) + end-to-end tests (lobby, roles, harbor, tasks, snuff, meetings, fog, end, hardening, stats) + a soak test
+test/            unit tests (bot brains, bot minds, chronicle) + end-to-end tests (lobby, roles, harbor, tasks, snuff, meetings, fog, end, hardening, stats, settings, quick match, special roles, maps) + a soak test
 wrangler.jsonc   Worker, Durable Object, assets and custom-domain config
 ```
 
@@ -166,6 +169,87 @@ offers a way back into a game in progress.
   drifting fog, everyone you can see gathered around you), Fraunces and Inter
   type, and a softly drifting fog behind every screen.
 
+## Install as an app
+
+On Android, Chrome, Edge and Samsung Internet, the home screen offers an
+**Install** button. On iPhone and iPad it explains the two taps (Share → Add to
+Home Screen).
+
+- **Full screen when installed.** The app opens full screen with its own icon,
+  a lantern over dark water (`public/icons/`), and a **Play now** shortcut.
+- **Phone-friendly.** It respects notches and rounded corners, and keeps the
+  screen awake during a game.
+- **Opens offline.** A small service worker (`public/sw.js`) keeps a copy of
+  the game's own files, so it opens instantly and even without a connection.
+  It always fetches fresh files first, and never touches the live game.
+- **Snoozable.** "Not now" hides the install card for two weeks.
+
+## Quick match: Play now
+
+**Play now** on the home screen asks a single `Matchmaker` Durable Object
+(`src/matchmaker.ts`) for a seat. It works like this:
+
+- **Finding a table.** It sends you to the fullest open table that still has
+  room, or opens a new one. Each seat it hands out is held for 15 seconds, so
+  a rush of players can't overfill a table.
+- **Waiting count.** The home screen shows how many people are waiting at
+  open tables right now.
+- **Starting by itself.** An open table starts about 40 seconds after the
+  first person sits down. It waits a little longer when someone new arrives
+  near the end, never more than 90 seconds in all, and 5 seconds once full.
+  Bots fill the table up to six players.
+- **Opening any room.** The host of any room can open it to everyone, or close
+  it again ("Who can join" in Game settings). New open tables pick a map at
+  random.
+- **Muting.** Anyone can mute another player's chat, just for themselves.
+
+`POST /api/quick` returns `{ code }`. `GET /api/quick` returns how many are waiting.
+
+## Special roles
+
+On by default; the host can turn them off.
+
+- **The Lamplighter** is one Keeper, at tables of 5 or more. Once per game,
+  they look into the lantern of someone standing with them and learn,
+  privately, whether that person is a Keeper or a Shade. Then they must
+  convince the others, and a Shade may pretend to be the Lamplighter. Cunning
+  Shade bots do exactly that.
+- **The Locksmith** is one Shade. They bar the doors of the place they're in,
+  and for 12 seconds nobody walks in or out. That's ideal for trapping a lone
+  Keeper, but everyone hears the bolts and sees a padlock on the map, and
+  whoever is locked in knows the Locksmith is among them. The bell opens the
+  doors. The first use comes 25 seconds into play (and after each meeting),
+  then it rests for 40 seconds.
+
+Bots use both. A Lamplighter bot looks at whoever it has reason to doubt and
+speaks up in the meeting, and Keeper bots trust their own look. A Locksmith
+bot bars the doors when it's alone with one Keeper and about to strike.
+
+## Host settings and maps
+
+In the lobby, under **Game settings**, the host picks:
+
+| Setting | Choices |
+|---|---|
+| Map | **The Harbor**, or **Frostmere**, a frozen port |
+| Who can join | With the code / Anyone (Play now) |
+| Special roles | On / Off |
+| Shades | Auto, 1, 2 or 3, capped at a third of the table |
+| Meetings | Quick (30s talk, 20s vote), Normal (45/25), Long (75/35) |
+| Tasks each | 3 to 6 |
+
+**Frostmere** is a frozen port under the northern lights. Its places are the
+Ice Market, where the bell hangs, Beacon Hill with the great beacon, the
+Frozen Pier, the Sled Barn, the Lodge, and an Icebreaker frozen in the bay. Its
+places sit in a ring with one shortcut across the ice. That spreads players
+out, which is lonelier and kinder to the Shades. It has its own tasks
+(Chip the ice, Stoke the stove…), its own wording and its own art.
+
+Every map uses the same six location slots: one where the bell hangs, one with
+the great lamp, and four others. Each map gives them its own names, paths and
+tasks (`src/harbor.ts`), so a new map is mostly data and art
+(`public/harbor.js`).
+
 ## Play statistics: the Harbor Log
 
 Open **/stats** (for example `https://game2.sedigitaltransformation.com/stats`)
@@ -288,3 +372,4 @@ record pointing somewhere else.
 8. ~~Art pass, the fog, bot cunning (with Auto), XP, ranks and daily streaks~~
 9. ~~Hardening: reconnects, abuse limits, security headers, wide-screen layouts, balance, performance and cost check, full test sweep~~
 10. ~~Play statistics: the Harbor Log at /stats~~
+11. ~~Install as an app; host settings; quick match (Play now); special roles (Lamplighter, Locksmith); a second map (Frostmere)~~

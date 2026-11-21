@@ -13,7 +13,7 @@ await build({
   outdir: out, format: "esm", bundle: true, platform: "neutral", logLevel: "silent",
 });
 const { decide, newBrain, observe, lastSeen, vouch, chooseSnuff, chooseReport, foundCold, remember, chooseFog, chooseRelight, chooseCheck, chooseBar } = await import(out + "bots.js");
-const { route, PATHS, LOCATIONS } = await import(out + "harbor.js");
+const { route, PATHS, LOCATIONS, MAPS } = await import(out + "harbor.js");
 
 console.log("Shadow Haven bot brain tests");
 
@@ -256,6 +256,22 @@ await test("the Locksmith bot bars the doors only alone with one Keeper, about t
   const easy = count(() => chooseBar(["k1"], [], true, "easy"));
   const cunning = count(() => chooseBar(["k1"], [], true, "cunning"));
   assert.ok(easy < cunning && cunning > 700, `${easy} < ${cunning}`);
+});
+
+await test("on Frostmere, bots walk Frostmere's paths", async () => {
+  const fp = MAPS.frostmere.paths;
+  for (const a of LOCATIONS) for (const b of LOCATIONS) {
+    let at = a;
+    for (const step of route(a, b, "frostmere")) { assert.ok(fp[at].includes(step), `${at}→${step}`); at = step; }
+    assert.equal(at, b);
+  }
+  assert.equal(route("market", "lighthouse", "frostmere").length, 3, "the beacon is further from the bell");
+  for (let i = 0; i < 300; i++) {
+    const b = newBrain(0, "frostmere");
+    const here = LOCATIONS[i % LOCATIONS.length];
+    const d = decide(b, here, "keeper", [], 1000, i % 2 ? ["lighthouse", "dock"] : []);
+    if (d.to) assert.ok(fp[here].includes(d.to), `${here} → ${d.to} isn't a Frostmere path`);
+  }
 });
 
 done("bots");

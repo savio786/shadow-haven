@@ -7,6 +7,7 @@ export const PLACE: Record<string, string> = {
   dock: "the Dock", lighthouse: "the Lighthouse", netloft: "the Net Loft",
   market: "the Market Square", clocktower: "the Clock Tower", chapel: "the Chapel",
 };
+const HARBOR_PLACE = PLACE;
 
 export interface HonorInput {
   players: PlayerSummary[];
@@ -72,7 +73,8 @@ export function computeHonors({ players, log, lamps, winner }: HonorInput): Hono
 }
 
 /** The night, as plain facts the storyteller may use (and nothing else). */
-export function taleFacts(input: { players: PlayerSummary[]; names: Record<string, string>; log: MatchEvent[]; reason: string; winner: "keepers" | "shades" }) {
+export function taleFacts(input: { players: PlayerSummary[]; names: Record<string, string>; log: MatchEvent[]; reason: string; winner: "keepers" | "shades"; places?: Record<string, string>; lampName?: string; lampPlace?: string }) {
+  const PLACE = input.places ?? HARBOR_PLACE;
   const n = (id?: string) => (id && input.names[id]) || "someone";
   const shades = input.players.filter((p) => p.role === "shade").map((p) => n(p.id));
   const keepers = input.players.filter((p) => p.role === "keeper").map((p) => n(p.id));
@@ -87,7 +89,7 @@ export function taleFacts(input: { players: PlayerSummary[]; names: Record<strin
     if (e.kind === "adrift") facts.push(`The town voted to set ${n(e.who)} adrift. ${n(e.who)} was ${e.wasShade ? "a Shade" : "an innocent Keeper"}.`);
     if (e.kind === "spared") facts.push(`The town could not agree, and nobody was set adrift.`);
     if (e.kind === "fog") facts.push(`${n(e.who)} secretly called a cold fog over the harbor, hiding every face.`);
-    if (e.kind === "relight") facts.push(`${n(e.who)} relit the great lamp at the Lighthouse and the fog lifted.`);
+    if (e.kind === "relight") facts.push(`${n(e.who)} relit ${input.lampName ?? "the great lamp"} at ${input.lampPlace ?? "the Lighthouse"} and the fog lifted.`);
     if (e.kind === "check") facts.push(`${n(e.who)}, the Lamplighter, secretly looked into ${n(e.victim)}'s lantern and saw ${e.wasShade ? "the cold flame of a Shade" : "a true Keeper's flame"}.`);
     if (e.kind === "bar") facts.push(`${n(e.who)}, the Shades' Locksmith, barred the doors of ${PLACE[e.loc ?? ""] ?? "a building"}.`);
   }
@@ -95,10 +97,10 @@ export function taleFacts(input: { players: PlayerSummary[]; names: Record<strin
   return facts;
 }
 
-export function talePrompt(facts: string[]) {
+export function talePrompt(facts: string[], setting = "a fog-bound harbor town") {
   return {
     system:
-      "You are the old storyteller of Shadow Haven, a fog-bound harbor town where Lantern Keepers tend the lights " +
+      `You are the old storyteller of Shadow Haven, ${setting}, where Lantern Keepers tend the lights ` +
       "and hidden Shades snuff them. Retell tonight's game as a short, atmospheric tale of 70 to 110 words. " +
       "Use ONLY the facts given, in order, naming the players. Past tense, simple vivid English, one paragraph, " +
       "no title, no lists, no emojis, no quotation marks. End on who won.",
@@ -107,7 +109,10 @@ export function talePrompt(facts: string[]) {
 }
 
 /** The tale, written without the AI: still specific to this game. */
-export function fallbackTale(input: { players: PlayerSummary[]; names: Record<string, string>; log: MatchEvent[]; winner: "keepers" | "shades" }) {
+export function fallbackTale(input: { players: PlayerSummary[]; names: Record<string, string>; log: MatchEvent[]; winner: "keepers" | "shades"; places?: Record<string, string>; lampName?: string; lampPlace?: string }) {
+  const PLACE = input.places ?? HARBOR_PLACE;
+  const lamp = input.lampName ?? "the great lamp";
+  const lampAt = input.lampPlace ?? "the Lighthouse";
   const n = (id?: string) => (id && input.names[id]) || "someone";
   const shades = input.players.filter((p) => p.role === "shade").map((p) => n(p.id));
   const parts = [`Fog rolled over Shadow Haven, and somewhere in it ${shades.length === 1 ? "a Shade" : "two Shades"} waited.`];
@@ -120,7 +125,7 @@ export function fallbackTale(input: { players: PlayerSummary[]; names: Record<st
       : `The town set ${n(e.who)} adrift, but ${n(e.who)} was only a Keeper, and the shadows smiled.`);
     if (e.kind === "spared") parts.push("Nobody could agree, and the boats stayed tied.");
     if (e.kind === "fog") parts.push("Then a cold fog rolled in, and every face became a shape.");
-    if (e.kind === "relight") parts.push(`${n(e.who)} climbed the Lighthouse and relit the great lamp; the fog fled.`);
+    if (e.kind === "relight") parts.push(`${n(e.who)} climbed to ${lampAt} and relit ${lamp}; the fog fled.`);
     if (e.kind === "check") parts.push(e.wasShade ? `${n(e.who)} held a lantern close and saw it burn cold.` : `${n(e.who)} looked into ${n(e.victim)}'s lantern and found it true.`);
     if (e.kind === "bar") parts.push(`Bolts slammed shut at ${PLACE[e.loc ?? ""] ?? "a doorway"}.`);
   }

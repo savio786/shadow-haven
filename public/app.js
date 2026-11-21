@@ -1,8 +1,8 @@
 // Shadow Haven — browser client.
 import { keeperSVG, shadeSVG, coldLanternSVG, wispSVG, bellSVG, boatSVG, endSceneSVG, honorIcon, LANTERNS } from "./lanterns.js";
 import { sfx, buzz, isMuted, setMuted } from "./sound.js";
-import { harborSVG, crowdSVG, PLACES } from "./harbor.js";
-import { runTask } from "./tasks.js";
+import { harborSVG, crowdSVG, PLACES, setMap, mapText, MAP_LIST } from "./harbor.js";
+import { runTask, setTaskWords } from "./tasks.js";
 
 const MIN_PLAYERS = 4;
 const REVEAL_MS = 7000;
@@ -330,6 +330,12 @@ function onMessage(msg) {
       if (msg.phase !== "playing") closeTask();
       if (msg.phase === "lobby") $("snuffed-overlay").hidden = true;
       lobby = msg;
+      if (msg.settings?.map) {
+        setMap(msg.settings.map);
+        setTaskWords(msg.settings.map);
+        document.body.dataset.map = msg.settings.map;
+        $("game-title").textContent = mapText().title;
+      }
       renderPhase();
       break;
     case "role":
@@ -669,8 +675,8 @@ function renderSituation(company) {
   if (bar) {
     const inside = bar.loc === view.here;
     $("bar-text").textContent = inside
-      ? `The doors of the ${PLACES[bar.loc]?.name} are barred — you're locked in!`
-      : `The doors of the ${PLACES[bar.loc]?.name} are barred.`;
+      ? `The doors of ${PLACES[bar.loc]?.the} are barred — you're locked in!`
+      : `The doors of ${PLACES[bar.loc]?.the} are barred.`;
     $("bar-secs").textContent = `${Math.ceil((bar.until - serverNow()) / 1000)}s`;
   }
   if (!alive && !$("wisp-art").innerHTML) {
@@ -694,8 +700,8 @@ function renderSituation(company) {
     $("fog-text").textContent = shade && alive
       ? "Your fog is down. The Keepers can't see faces — strike unseen."
       : view.here === "lighthouse" && alive
-        ? "Fog! You're at the Lighthouse — relight the great lamp."
-        : "Fog! Faces are hidden. Relight the great lamp at the Lighthouse.";
+        ? `Fog! You're at ${PLACES.lighthouse.the} — ${mapText().lampAction.toLowerCase()}.`
+        : `Fog! Faces are hidden. ${mapText().lampAction} at ${PLACES.lighthouse.the}.`;
   }
 
   // Cold lanterns lying here.
@@ -729,7 +735,7 @@ function renderSituation(company) {
   if (fogOn && alive && view.here === "lighthouse") {
     const b = document.createElement("button");
     b.className = "relight-btn wide";
-    b.textContent = "Relight the great lamp";
+    b.textContent = mapText().lampAction;
     b.addEventListener("click", () => { send({ t: "relight" }); sfx.chime(true); });
     actions.append(b);
     if (!hint) hint = shade ? "Relighting it yourself would look very innocent…" : "Everyone will know you lifted the fog.";
@@ -741,7 +747,7 @@ function renderSituation(company) {
     b.disabled = wait > 0;
     b.textContent = wait > 0 ? `Call the fog · ready in ${Math.ceil(wait / 1000)}s` : "Call the fog";
     b.addEventListener("click", () => {
-      if (confirm("Hide every face from the Keepers for 30 seconds? Anyone can lift it at the Lighthouse.")) send({ t: "fog" });
+      if (confirm(`Hide every face from the Keepers for 30 seconds? Anyone can lift it at ${PLACES.lighthouse.the}.`)) send({ t: "fog" });
     });
     actions.append(b);
   }
@@ -775,7 +781,7 @@ function renderSituation(company) {
     const b = document.createElement("button");
     b.className = "bar-btn wide";
     b.disabled = boltWait > 0 || !!bar;
-    b.textContent = bar ? "The doors are barred" : boltWait > 0 ? `Bar the doors · ready in ${Math.ceil(boltWait / 1000)}s` : `Bar the doors of the ${PLACES[view.here]?.name}`;
+    b.textContent = bar ? "The doors are barred" : boltWait > 0 ? `Bar the doors · ready in ${Math.ceil(boltWait / 1000)}s` : `Bar the doors of ${PLACES[view.here]?.the}`;
     b.addEventListener("click", () => send({ t: "bar" }));
     actions.append(b);
   }
@@ -859,7 +865,7 @@ function renderMeeting() {
 
   if (!$("bell-art").innerHTML) $("bell-art").innerHTML = bellSVG({ size: 64 });
   $("meet-stage").textContent = STAGE_LABEL[m.stage];
-  const place = PLACES[m.loc]?.name ?? m.loc;
+  const place = PLACES[m.loc]?.the ?? m.loc;
   if (m.kind === "bell") {
     $("meeting-title").textContent = `${nameOf(m.reporter)} rang the emergency bell`;
     $("meeting-text").textContent = "No lantern was found — they've called everyone together.";
@@ -867,7 +873,7 @@ function renderMeeting() {
     const found = m.found.map(nameOf);
     $("meeting-title").textContent = `${nameOf(m.reporter)} rang the bell`;
     $("meeting-text").textContent = found.length
-      ? `${found.join(" and ")}'s lantern${found.length > 1 ? "s were" : " was"} found cold at the ${place}.`
+      ? `${found.join(" and ")}'s lantern${found.length > 1 ? "s were" : " was"} found cold at ${place}.`
       : `Something was found at the ${place}.`;
   }
 
@@ -1002,15 +1008,15 @@ function renderQuick() {
   const lines = [];
   for (const e of mySaw.slice().reverse()) {
     if (e.kind === "snuff" && playerOf(e.who) && !playerOf(e.who).adrift) lines.push(`I saw ${nameOf(e.who)} snuff ${nameOf(e.victim)}!`);
-    if (e.kind === "lamp" && playerOf(e.who) && !playerOf(e.who).snuffed) lines.push(`${nameOf(e.who)} lit the great lamp — they're a Keeper.`);
+    if (e.kind === "lamp" && playerOf(e.who) && !playerOf(e.who).snuffed) lines.push(`${nameOf(e.who)} ${mapText().lampTask} — they're a Keeper.`);
   }
   if (myCheck && playerOf(myCheck.who) && !playerOf(myCheck.who).adrift) {
     lines.unshift(myCheck.role === "shade"
       ? `I'm the Lamplighter. ${nameOf(myCheck.who)}'s flame burns cold — a Shade!`
       : `I'm the Lamplighter. ${nameOf(myCheck.who)}'s flame burns true.`);
   }
-  const trail = [...new Set(myTrail.slice(-3).reverse())].map((l) => PLACES[l]?.name).filter(Boolean);
-  if (trail.length) lines.push(`I was at the ${trail.reverse().join(", then the ")}.`);
+  const trail = [...new Set(myTrail.slice(-3).reverse())].map((l) => PLACES[l]?.the).filter(Boolean);
+  if (trail.length) lines.push(`I was at ${trail.reverse().join(", then ")}.`);
   lines.push("I didn't see anything.", "Where was everyone?", "Let's skip — not enough to go on.");
   const box = $("quick");
   box.innerHTML = "";
@@ -1281,7 +1287,7 @@ function renderFates(r) {
     line.className = "fate-line";
     const what = s.fate === "survived" ? "Made it through the night"
       : s.fate === "adrift" ? "Set adrift by the town"
-      : `Snuffed at the ${PLACES[s.where]?.name ?? "harbor"}`;
+      : `Snuffed at ${PLACES[s.where]?.the ?? "the harbor"}`;
     const extra = s.role === "keeper" ? ` · ${s.tasksDone}/${s.tasksTotal} tasks` : s.snuffs ? ` · snuffed ${s.snuffs}` : "";
     line.textContent = what + extra;
     if (p?.isBot) name.append(" ", tag("Bot", "bot"));
@@ -1338,20 +1344,20 @@ function renderTale(r) {
   const tl = $("timeline");
   tl.innerHTML = "";
   const n = (id) => nameOf(id);
-  const where = (loc) => PLACES[loc]?.name ?? "harbor";
+  const where = (loc) => PLACES[loc]?.the ?? "the harbor";
   const events = [{ at: 0, kind: "start" }, ...r.log, { at: r.durationMs, kind: "end" }];
   for (const e of events) {
     const text = {
       start: "Night falls. The lanterns are lit.",
-      snuff: `${n(e.who)} snuffed ${n(e.victim)} at the ${where(e.loc)}`,
+      snuff: `${n(e.who)} snuffed ${n(e.victim)} at ${where(e.loc)}`,
       report: `${n(e.who)} found the cold lantern and rang the bell`,
       bell: `${n(e.who)} rang the emergency bell`,
       adrift: `${n(e.who)} was set adrift — ${e.wasShade ? "a Shade!" : "a Keeper"}`,
       spared: "The town couldn't agree. Nobody was set adrift.",
       fog: `${n(e.who)} called the fog`,
-      relight: `${n(e.who)} relit the great lamp`,
+      relight: `${n(e.who)} relit ${mapText().lampName}`,
       check: `${n(e.who)}, the Lamplighter, looked into ${n(e.victim)}'s lantern — ${e.wasShade ? "cold!" : "true"}`,
-      bar: `${n(e.who)}, the Locksmith, barred the doors of the ${where(e.loc)}`,
+      bar: `${n(e.who)}, the Locksmith, barred the doors of ${where(e.loc)}`,
       end: r.winner === "keepers" ? "Dawn. The Keepers win." : "Darkness. The Shades win.",
     }[e.kind];
     if (!text) continue;
@@ -1692,12 +1698,15 @@ function renderSettings(isHost) {
     }
   };
   pick("set-public", !!st.public);
+  pick("set-map", st.map || "harbor");
   pick("set-specials", st.specials !== false);
   pick("set-shades", st.shades, (v) => Number(v) > cap);
   pick("set-meeting", st.meeting);
   pick("set-tasks", st.tasks);
   const shades = lobby.shades;
-  $("settings-summary").textContent = `${st.public ? "Open · " : ""}${shades} Shade${shades === 1 ? "" : "s"} · ${PACE_NAME[st.meeting]} · ${st.tasks} tasks each`;
+  const mapInfo = MAP_LIST.find((m) => m.id === (st.map || "harbor")) ?? MAP_LIST[0];
+  $("map-blurb").textContent = mapInfo.blurb;
+  $("settings-summary").textContent = `${mapInfo.name} · ${st.public ? "Open · " : ""}${shades} Shade${shades === 1 ? "" : "s"} · ${PACE_NAME[st.meeting]} · ${st.tasks} tasks each`;
   renderAutoStart();
   const notes = [];
   if (st.shades > cap) notes.push(`${st.shades} Shades needs ${st.shades * 3}+ players, so this table gets ${cap}.`);
@@ -1727,6 +1736,7 @@ function initLobby() {
   for (const b of document.querySelectorAll("#set-meeting button")) b.addEventListener("click", () => send({ t: "settings", meeting: b.dataset.value }));
   for (const b of document.querySelectorAll("#set-tasks button")) b.addEventListener("click", () => send({ t: "settings", tasks: Number(b.dataset.value) }));
   for (const b of document.querySelectorAll("#set-public button")) b.addEventListener("click", () => send({ t: "settings", public: b.dataset.value === "true" }));
+  for (const b of document.querySelectorAll("#set-map button")) b.addEventListener("click", () => send({ t: "settings", map: b.dataset.value }));
   for (const b of document.querySelectorAll("#set-specials button")) b.addEventListener("click", () => send({ t: "settings", specials: b.dataset.value === "true" }));
   $("start").addEventListener("click", () => send({ t: "start" }));
   const leave = () => {

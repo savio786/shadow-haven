@@ -18,12 +18,12 @@ import {
   type ChatLine, type ClientMsg, type GameResult, type MatchEvent, type Meeting, type Phase, type PlayerSummary,
   type BotLevel, type PublicPlayer, type PublicTask, type Role, type ServerMsg, type Settings,
 } from "./shared";
-import { LOCATIONS, PATHS, START, adjacent, isLoc, route, type Loc } from "./harbor";
+import { LOCATIONS, MAP_IDS, adjacent, isLoc, isMapId, mapOf, route, type Loc, type MapId } from "./harbor";
 import {
   chooseBar, chooseCheck, chooseFog, chooseRelight, chooseReport, chooseSnuff, decide, foundCold, newBrain, observe, remember, type Brain,
 } from "./bots";
-import { TASKS, assignTasks, checkAnswer, makeChallenge, type Attempt, type Task } from "./tasks";
-import { PLACE_NAMES, chooseVote, mentions, tally, type MindContext } from "./minds";
+import { TASKS, assignTasks, checkAnswer, makeChallenge, taskName, type Attempt, type Task } from "./tasks";
+import { chooseVote, mentions, tally, type MindContext } from "./minds";
 import { AiGate, DEFAULT_MODEL, speak, write } from "./ai";
 import { cleanTale, computeHonors, fallbackTale, taleFacts, talePrompt } from "./chronicle";
 import type { GameRecord, Outcome, Why } from "./stats";
@@ -176,7 +176,11 @@ export class Room extends DurableObject<Env> {
     if (action === "create" && request.method === "POST") {
       if (this.state.created) return Response.json({ error: "taken" }, { status: 409 });
       this.state = { ...this.state, code, created: true, createdAt: Date.now() };
-      if (url.searchParams.get("public") === "1") this.state.settings = { ...this.state.settings, public: true };
+      if (url.searchParams.get("public") === "1") {
+        // Open tables pick a map at random, for variety.
+        const map = MAP_IDS[Math.floor(Math.random() * MAP_IDS.length)];
+        this.state.settings = { ...this.state.settings, public: true, map };
+      }
       await this.save();
       await this.scheduleAlarm();
       return Response.json({ code });
@@ -317,7 +321,7 @@ export class Room extends DurableObject<Env> {
       lobbyChanged = true;
       this.dirty = true;
       // Everyone opens their eyes in the market square.
-      this.refresh([START], now);
+      this.refresh([this.map.start], now);
     }
 
     if (s.phase === "meeting" && s.meeting) {
@@ -546,7 +550,7 @@ export class Room extends DurableObject<Env> {
     const playFrom = now + REVEAL_MS;
     for (const p of this.state.players) {
       p.role = shades.has(p.id) ? "shade" : "keeper";
-      p.loc = START;
+      p.loc = this.map.start;
       p.readyAt = playFrom;
       p.tasks = assignTasks(this.state.settings.tasks);
       p.alive = true;
@@ -557,7 +561,7 @@ export class Room extends DurableObject<Env> {
       p.snuffedAt = null;
       delete p.attempt;
       delete p.working;
-      if (p.isBot) p.brain = newBrain(playFrom);
+      if (p.isBot) p.brain = newBrain(playFrom, this.mapId);
       p.special = null;
       p.checkUsed = false;
       p.barReadyAt = playFrom + FIRST_BAR_MS;
@@ -642,7 +646,7 @@ export class Room extends DurableObject<Env> {
     if (this.state.phase !== "playing" || !me.loc) {
       return this.send(ws, { t: "error", code: "not_playing", text: "You can't move right now." });
     }
-    if (!isLoc(to) || !adjacent(me.loc, to)) {
+    if (!isLoc(to) || !adjacent(me.loc, to, this.mapId)) {
       return this.send(ws, { t: "error", code: "bad_move", text: "There's no path from here to there." });
     }
     const now = Date.now();
@@ -753,11 +757,11 @@ export class Room extends DurableObject<Env> {
         if (bot.role === "shade" && !this.state.fogUntil && now >= this.state.fogReadyAt && chooseFog(level)) {
           this.callFog(bot, now);
         }
-        if (this.state.fogUntil && bot.loc === "lighthouse" && chooseRelight(bot.role, level)) {
+        if (this.state.fogUntil && bot.loc === this.map.lamp && chooseRelight(bot.role, level)) {
           this.liftFog(now, bot);
         } else if (this.state.fogUntil && bot.role === "keeper" && !bot.working && now >= bot.readyAt && chooseRelight("keeper", level)) {
           // Head for the lamp.
-          const next = route(bot.loc, "lighthouse")[0];
+          const next = route(bot.loc, this.map.lamp, this.mapId)[0];
           if (next && !this.isBarred(bot.loc, next, now)) {
             this.moveTo(bot, next, now);
             bot.brain.nextMoveAt = now + MOVE_COOLDOWN_MS + 300;
@@ -792,13 +796,17 @@ export class Room extends DurableObject<Env> {
       const todo = bot.alive || bot.role === "keeper" ? bot.tasks.filter((t) => !t.done).map((t) => t.loc) : [];
       const choice = decide(bot.brain, bot.loc, role, bot.alive ? allies : [], now, todo, !bot.alive);
       if (choice.work) bot.working = { loc: choice.work, until: now + choice.dwellMs };
-      else if (choice.to && adjacent(bot.loc, choice.to) && now >= bot.readyAt && !this.isBarred(bot.loc, choice.to, now)) this.moveTo(bot, choice.to, now);
+      else if (choice.to && adjacent(bot.loc, choice.to, this.mapId) && now >= bot.readyAt && !this.isBarred(bot.loc, choice.to, now)) this.moveTo(bot, choice.to, now);
       bot.brain.nextMoveAt = now + Math.max(choice.dwellMs, MOVE_COOLDOWN_MS);
       this.dirty = true;
     }
   }
 
   // ---------- Room settings ----------
+
+  /** This room's map. */
+  private get mapId(): MapId { return isMapId(this.state.settings.map) ? this.state.settings.map : "harbor"; }
+  private get map() { return mapOf(this.mapId); }
 
   /** Talk and vote time for this room's meetings. */
   private pace() {
@@ -834,6 +842,10 @@ export class Room extends DurableObject<Env> {
       if (typeof msg.specials !== "boolean") return bad();
       next.specials = msg.specials;
     }
+    if (msg.map !== undefined) {
+      if (!isMapId(msg.map)) return bad();
+      next.map = msg.map;
+    }
     this.state.settings = next;
     await this.save();
     this.broadcastLobby();
@@ -861,7 +873,7 @@ export class Room extends DurableObject<Env> {
     s.fogReadyAt = s.fogUntil + FOG_COOLDOWN_MS;
     this.logEvent({ kind: "fog", who: by.id });
     this.dirty = true;
-    this.broadcast({ t: "notice", text: "A cold fog rolls in. Faces vanish — relight the great lamp at the Lighthouse!" });
+    this.broadcast({ t: "notice", text: `A cold fog rolls in. Faces vanish — relight ${this.map.lampName} at ${this.map.places[this.map.lamp]}!` });
     this.refresh([...LOCATIONS], now);
   }
 
@@ -870,7 +882,7 @@ export class Room extends DurableObject<Env> {
     if (this.state.phase !== "playing" || !this.state.fogUntil || !me.alive) {
       return this.send(ws, { t: "error", code: "no_fog", text: "There's no fog to lift." });
     }
-    if (me.loc !== "lighthouse") return this.send(ws, { t: "error", code: "not_here", text: "The great lamp is at the Lighthouse." });
+    if (me.loc !== this.map.lamp) return this.send(ws, { t: "error", code: "not_here", text: `${cap(this.map.lampName)} is at ${this.map.places[this.map.lamp]}.` });
     this.liftFog(Date.now(), me);
     await this.save();
     this.broadcastLobby();
@@ -884,7 +896,7 @@ export class Room extends DurableObject<Env> {
     s.fogReadyAt = Math.max(s.fogReadyAt, now + FOG_COOLDOWN_MS);
     if (by) this.logEvent({ kind: "relight", who: by.id });
     this.dirty = true;
-    this.broadcast({ t: "notice", text: by ? `${by.name} relit the great lamp. The fog lifts.` : "The fog thins and drifts out to sea." });
+    this.broadcast({ t: "notice", text: by ? `${by.name} relit ${this.map.lampName}. The fog lifts.` : "The fog thins and drifts out to sea." });
     this.refresh([...LOCATIONS], now);
   }
 
@@ -942,7 +954,7 @@ export class Room extends DurableObject<Env> {
     by.barReadyAt = now + BAR_MS + BAR_COOLDOWN_MS;
     this.logEvent({ kind: "bar", who: by.id, loc });
     this.dirty = true;
-    this.broadcast({ t: "notice", text: `Bolts slam shut: the doors of ${PLACE_NAMES[loc]} are barred!` });
+    this.broadcast({ t: "notice", text: `Bolts slam shut: the doors of ${this.map.places[loc]} are barred!` });
     this.refresh([loc], now);
   }
 
@@ -1028,7 +1040,7 @@ export class Room extends DurableObject<Env> {
     if (this.state.phase !== "playing" || !me.alive) {
       return this.send(ws, { t: "error", code: "cant_bell", text: "You can't ring the bell now." });
     }
-    if (me.loc !== START) return this.send(ws, { t: "error", code: "not_here", text: "The bell hangs in the Market Square." });
+    if (me.loc !== this.map.start) return this.send(ws, { t: "error", code: "not_here", text: `The bell hangs at ${this.map.places[this.map.start]}.` });
     if (me.bellUsed) return this.send(ws, { t: "error", code: "bell_used", text: "You've already rung the bell this game." });
     me.bellUsed = true;
     this.startMeeting(me, Date.now(), "bell");
@@ -1072,7 +1084,7 @@ export class Room extends DurableObject<Env> {
     }
     s.cold = []; // the harbor is tidied while everyone talks
     for (const p of s.players) {
-      p.loc = START;
+      p.loc = this.map.start;
       p.readyAt = Number.MAX_SAFE_INTEGER; // nobody walks during a meeting
       delete p.attempt;
       delete p.working;
@@ -1083,7 +1095,7 @@ export class Room extends DurableObject<Env> {
     this.replies.clear();
     this.aiCalls = 0;
     this.dirty = true;
-    this.refresh([START], now);
+    this.refresh([this.map.start], now);
   }
 
   /** Move the meeting along. Returns true when everyone should get a fresh update. */
@@ -1192,6 +1204,8 @@ export class Room extends DurableObject<Env> {
       replyTo,
       now: Date.now(),
       level: s.settings.botLevel,
+      places: this.map.places,
+      setting: this.map.setting,
     };
   }
 
@@ -1317,7 +1331,7 @@ export class Room extends DurableObject<Env> {
       if (p.brain) p.brain.nextMoveAt = now + 600 + Math.random() * 2500;
     }
     this.dirty = true;
-    if (!this.checkWin()) this.refresh([START], now);
+    if (!this.checkWin()) this.refresh([this.map.start], now);
   }
 
   /** Who this player can see where they stand: the living see the living; wisps see everyone. */
@@ -1383,7 +1397,9 @@ export class Room extends DurableObject<Env> {
     if (real && p.stats) p.stats.tasks++;
     if (real && def.witnessed && p.alive && p.stats) p.stats.lamp = true;
     if (real && def.witnessed && p.alive && p.loc) {
-      const text = `${p.name} lit the great lamp — the beam swept the bay.`;
+      const text = this.mapId === "frostmere"
+        ? `${p.name} kindled the great beacon — light spilled across the ice.`
+        : `${p.name} lit the great lamp — the beam swept the bay.`;
       const sockets = this.socketsByPlayer();
       for (const other of this.state.players) {
         if (other.id === p.id || other.loc !== p.loc) continue;
@@ -1459,6 +1475,13 @@ export class Room extends DurableObject<Env> {
       progress: total ? done / total : 0,
       aiLines: s.aiLines ?? 0,
       fallbackLines: s.fallbackLines ?? 0,
+      map: this.mapId,
+      public: !!s.settings.public,
+      specials: !!s.settings.specials,
+      pace: s.settings.meeting,
+      tasksEach: s.settings.tasks,
+      checks: count("check"),
+      bars: count("bar"),
     };
     const stub = this.env.STATS.get(this.env.STATS.idFromName("global"));
     this.ctx.waitUntil(stub.record(record).catch((e) => console.log("stats not recorded:", String(e))));
@@ -1503,8 +1526,12 @@ export class Room extends DurableObject<Env> {
 
   /** The storyteller writes up the night (AI, with a written fallback), then everyone gets it. */
   private tellTale(result: GameResult, names: Record<string, string>) {
-    const input = { players: result.players, names, log: result.log, reason: result.reason, winner: result.winner };
-    const { system, user } = talePrompt(taleFacts(input));
+    const map = this.map;
+    const input = {
+      players: result.players, names, log: result.log, reason: result.reason, winner: result.winner,
+      places: map.places, lampName: map.lampName, lampPlace: map.places[map.lamp],
+    };
+    const { system, user } = talePrompt(taleFacts(input), map.setting);
     this.meter.tales++;
     write(this.env.AI, this.env.AI_MODEL || DEFAULT_MODEL, system, user, cleanTale).then(async (text) => {
       if (this.state.result !== result) return; // a new game has begun
@@ -1521,7 +1548,7 @@ export class Room extends DurableObject<Env> {
   }
 
   private sendTasks(ws: WebSocket, p: Player) {
-    const tasks: PublicTask[] = p.tasks.map((t) => ({ id: t.id, loc: t.loc, name: TASKS[t.loc].name, done: t.done }));
+    const tasks: PublicTask[] = p.tasks.map((t) => ({ id: t.id, loc: t.loc, name: taskName(this.mapId, t.loc), done: t.done }));
     this.send(ws, { t: "tasks", tasks });
   }
 
@@ -1530,7 +1557,7 @@ export class Room extends DurableObject<Env> {
     this.send(ws, {
       t: "view",
       here: p.loc,
-      neighbors: PATHS[p.loc],
+      neighbors: this.map.paths[p.loc],
       present: this.fogHides(p) ? [] : this.visibleTo(p),
       wisps: p.alive ? [] : this.visibleTo(p).filter((id) => !this.player(id)?.alive),
       fog: this.fogHides(p),
@@ -1770,6 +1797,8 @@ function shuffle<T>(items: T[]): T[] {
   }
   return a;
 }
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function cleanName(raw: unknown) {
   return String(raw ?? "")

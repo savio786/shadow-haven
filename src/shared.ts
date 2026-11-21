@@ -119,9 +119,10 @@ export interface Settings {
   tasks: number;        // tasks each, TASKS_MIN–TASKS_MAX
   public: boolean;      // open to anyone through Play now
   specials: boolean;    // deal the Lamplighter and the Locksmith
+  map: "harbor" | "frostmere";
 }
 
-export const DEFAULT_SETTINGS: Settings = { botLevel: "normal", auto: false, shades: 0, meeting: "normal", tasks: 5, public: false, specials: true };
+export const DEFAULT_SETTINGS: Settings = { botLevel: "normal", auto: false, shades: 0, meeting: "normal", tasks: 5, public: false, specials: true, map: "harbor" };
 
 /** Public rooms start by themselves: this long after the first person arrives… */
 export const AUTO_START_MS = 40_000;
@@ -214,7 +215,7 @@ export type ClientMsg =
   | { t: "start" }
   | { t: "endGame" }
   | { t: "playAgain" }
-  | { t: "settings"; botLevel?: BotLevel; auto?: boolean; shades?: number; meeting?: MeetingPace; tasks?: number; public?: boolean; specials?: boolean }
+  | { t: "settings"; botLevel?: BotLevel; auto?: boolean; shades?: number; meeting?: MeetingPace; tasks?: number; public?: boolean; specials?: boolean; map?: string }
   | { t: "check"; target: string }
   | { t: "bar" }
   | { t: "fog" }

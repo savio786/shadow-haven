@@ -3,7 +3,7 @@
 // their personality and that memory — never from hidden server knowledge.
 // The same memory will later feed the AI that lets bots talk in meetings.
 
-import { LOCATIONS, PATHS, route, type Loc } from "./harbor";
+import { LOCATIONS, mapOf, route, type Loc, type MapId } from "./harbor";
 import type { BotLevel, Role } from "./shared";
 import { TASKS } from "./tasks";
 
@@ -34,6 +34,7 @@ export interface Brain {
   goal: Loc | null;       // where it's heading, if anywhere
   vouched: string[];      // players it saw prove themselves (witnessed tasks)
   evidence: Evidence[];   // what it will bring up when everyone gathers
+  map?: MapId;            // which map it's walking (harbor if unset)
 }
 
 const MEMORY_CAP = 60;
@@ -45,8 +46,9 @@ const rand = () => crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32;
 const pick = <T>(xs: readonly T[]) => xs[Math.floor(rand() * xs.length)];
 const between = (lo: number, hi: number) => lo + rand() * (hi - lo);
 
-export function newBrain(now: number): Brain {
+export function newBrain(now: number, map: MapId = "harbor"): Brain {
   return {
+    map,
     personality: pick(PERSONALITIES),
     favorite: pick(LOCATIONS),
     nextMoveAt: now + between(1500, 4500),
@@ -193,7 +195,7 @@ export interface Decision {
 export function decide(brain: Brain, here: Loc, role: Role, allies: string[], now: number, todo: Loc[] = [], focused = false): Decision {
   const step = (goal: Loc | null): Loc | null => {
     brain.goal = goal && goal !== here ? goal : null;
-    return brain.goal ? route(here, brain.goal)[0] ?? null : null;
+    return brain.goal ? route(here, brain.goal, brain.map)[0] ?? null : null;
   };
   const workHere = (): Decision => {
     const [lo, hi] = TASKS[here].botWorkMs;
@@ -201,7 +203,7 @@ export function decide(brain: Brain, here: Loc, role: Role, allies: string[], no
     return { to: null, dwellMs: between(lo, hi), work: here };
   };
   const nearest = (places: Loc[]) =>
-    places.reduce<Loc | null>((best, l) => (best === null || route(here, l).length < route(here, best).length ? l : best), null);
+    places.reduce<Loc | null>((best, l) => (best === null || route(here, l, brain.map).length < route(here, best, brain.map).length ? l : best), null);
 
   // --- Shades hunt: head for a Keeper last seen on their own. ---
   if (role === "shade") {
@@ -254,9 +256,10 @@ export function decide(brain: Brain, here: Loc, role: Role, allies: string[], no
 
 /** A random neighbour, preferring not to walk straight back. */
 function wander(brain: Brain, here: Loc): Loc {
-  const options = PATHS[here].filter((l) => l !== brain.cameFrom);
+  const paths = mapOf(brain.map).paths;
+  const options = paths[here].filter((l) => l !== brain.cameFrom);
   brain.goal = null;
-  return pick(options.length ? options : PATHS[here]);
+  return pick(options.length ? options : paths[here]);
 }
 
 /** Location with the most people seen recently. */

@@ -16,4 +16,5 @@ await import("./stats.test.mjs");
 await import("./settings.test.mjs");
 await import("./quick.test.mjs");
 await import("./specials.test.mjs");
+await import("./maps.test.mjs");
 process.exit(process.exitCode ?? 0);
