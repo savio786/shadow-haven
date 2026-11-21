@@ -7,13 +7,17 @@
 //   GET  /api/room/:code          → room info (exists? full? started?)
 //   GET  /api/room/:code/ws       → WebSocket into that room
 //   GET  /api/stats?days=30       → play statistics (anonymous), for the /stats page
+//   POST /api/quick               → Play now: a seat in an open public room, returns { code }
+//   GET  /api/quick               → how many people are waiting in public rooms
 
 import { CODE_ALPHABET, CODE_PATTERN } from "./shared";
 import type { Room } from "./room";
 import type { Stats } from "./stats";
+import type { Matchmaker } from "./matchmaker";
 
 export { Room } from "./room";
 export { Stats } from "./stats";
+export { Matchmaker } from "./matchmaker";
 
 interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -23,6 +27,8 @@ export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
   /** Play statistics: one anonymous line per game (optional: games run fine without it). */
   STATS?: DurableObjectNamespace<Stats>;
+  /** Quick match: which public rooms are open (optional: Play now is off without it). */
+  MATCH?: DurableObjectNamespace<Matchmaker>;
   ASSETS: Fetcher;
   /** Workers AI, which gives bots their voices in meetings (optional: bots fall back without it). */
   AI?: { run(model: string, input: unknown): Promise<unknown> };
@@ -75,6 +81,15 @@ export default {
       const days = [7, 30, 90, 365].includes(asked) ? asked : 30;
       const stub = env.STATS.get(env.STATS.idFromName("global"));
       return json(await stub.summary(days));
+    }
+
+    if (url.pathname === "/api/quick") {
+      if (!env.MATCH) return json({ error: "no_quick", text: "Quick match isn't available right now." }, 404);
+      const mm = env.MATCH.get(env.MATCH.idFromName("global"));
+      if (request.method === "GET") return json(await mm.openCount());
+      if (request.method !== "POST") return json({ error: "method" }, 405);
+      if (!(await allowed(env, env.CREATE_LIMIT, request, "quick"))) return json(SLOW_DOWN, 429);
+      return json(await mm.quick());
     }
 
     if (url.pathname === "/api/rooms" && request.method === "POST") {

@@ -13,6 +13,7 @@ import {
   BOT_NAMES, CHAT_MAX, FIRST_SNUFF_MS, FOG_COOLDOWN_MS, FOG_FIRST_MS, FOG_MS, GATHER_MS, LANTERNS, MAX_PLAYERS, MIN_PLAYERS,
   MOVE_COOLDOWN_MS, NAME_MAX, RESULT_MS, REVEAL_MS, SHAPES, SNUFF_COOLDOWN_MS, shadeCount,
   DEFAULT_SETTINGS, MEETING_PACE, TASKS_MIN, TASKS_MAX,
+  AUTO_START_MS, AUTO_START_GRACE_MS, AUTO_START_MAX_MS, AUTO_START_FILL,
   type ChatLine, type ClientMsg, type GameResult, type MatchEvent, type Meeting, type Phase, type PlayerSummary,
   type BotLevel, type PublicPlayer, type PublicTask, type Role, type ServerMsg, type Settings,
 } from "./shared";
@@ -81,6 +82,8 @@ interface RoomState {
   settings: Settings;
   fogUntil: number | null;       // the Shades' fog is down until then
   fogReadyAt: number;            // the Shades can call the fog again from then
+  autoStartAt: number | null;     // a public lobby starts by itself then
+  firstArrivalAt: number | null;  // when the first person sat down in this public lobby
   aiLines: number;               // this game's bot lines by the AI…
   fallbackLines: number;         // …and by the built-in fallback (for the play statistics)
 }
@@ -100,7 +103,7 @@ function emptyRoom(): RoomState {
     revealEndsAt: null, result: null, cold: [], meeting: null, revealed: [], votes: {}, chatSeq: 0,
     log: [], gameNo: 0, startedAt: 0,
     settings: { ...DEFAULT_SETTINGS }, fogUntil: null, fogReadyAt: 0,
-    aiLines: 0, fallbackLines: 0,
+    aiLines: 0, fallbackLines: 0, autoStartAt: null, firstArrivalAt: null,
   };
 }
 
@@ -168,6 +171,7 @@ export class Room extends DurableObject<Env> {
     if (action === "create" && request.method === "POST") {
       if (this.state.created) return Response.json({ error: "taken" }, { status: 409 });
       this.state = { ...this.state, code, created: true, createdAt: Date.now() };
+      if (url.searchParams.get("public") === "1") this.state.settings = { ...this.state.settings, public: true };
       await this.save();
       await this.scheduleAlarm();
       return Response.json({ code });
@@ -326,6 +330,15 @@ export class Room extends DurableObject<Env> {
       if (s.phase !== "playing") lobbyChanged = true; // a bot rang the bell
     }
 
+    if (s.phase === "lobby" && s.settings.public && s.autoStartAt && now >= s.autoStartAt && this.humans().some((p) => this.isConnected(p.id))) {
+      // A public room's wait is over: fill empty seats with bots and begin.
+      while (s.players.length < Math.max(AUTO_START_FILL, MIN_PLAYERS) && s.players.length < MAX_PLAYERS) this.seatBot();
+      s.autoStartAt = null;
+      s.firstArrivalAt = null;
+      await this.startGame();
+      lobbyChanged = true;
+    }
+
     if (s.phase === "lobby") {
       const before = s.players.length;
       s.players = s.players.filter(
@@ -350,6 +363,10 @@ export class Room extends DurableObject<Env> {
 
     if (!this.anyHumanHere() && now - this.lastHumanSeen() >= EMPTY_ROOM_TTL) {
       if (s.phase === "playing" || s.phase === "meeting") this.recordGame("abandoned", "empty");
+      if (s.settings.public && this.env.MATCH) {
+        const mm = this.env.MATCH.get(this.env.MATCH.idFromName("global"));
+        this.ctx.waitUntil(mm.update({ code: s.code, open: false, humans: 0, players: 0, startsAt: null }).catch(() => {}));
+      }
       await this.ctx.storage.deleteAll();
       this.state = emptyRoom();
       this.dirty = false;
@@ -445,6 +462,13 @@ export class Room extends DurableObject<Env> {
     if (this.state.players.length >= MAX_PLAYERS) {
       return this.send(ws, { t: "error", code: "full", text: "The room is full." });
     }
+    this.seatBot();
+    await this.save();
+    this.broadcastLobby();
+  }
+
+  /** Add one bot Keeper to the table. */
+  private seatBot() {
     const used = new Set(this.state.players.map((p) => p.name));
     const name = BOT_NAMES.find((n) => !used.has(n)) ?? this.uniqueName("Keeper");
     this.state.players.push({
@@ -462,8 +486,6 @@ export class Room extends DurableObject<Env> {
       alive: true,
       snuffReadyAt: 0,
     });
-    await this.save();
-    this.broadcastLobby();
   }
 
   private async onRemove(ws: WebSocket, me: Player, targetId: string) {
@@ -767,6 +789,10 @@ export class Room extends DurableObject<Env> {
     if (msg.tasks !== undefined) {
       if (!Number.isInteger(msg.tasks) || msg.tasks < TASKS_MIN || msg.tasks > TASKS_MAX) return bad();
       next.tasks = msg.tasks;
+    }
+    if (msg.public !== undefined) {
+      if (typeof msg.public !== "boolean") return bad();
+      next.public = msg.public;
     }
     this.state.settings = next;
     await this.save();
@@ -1498,6 +1524,7 @@ export class Room extends DurableObject<Env> {
       now: Date.now(),
       settings: s.settings,
       fogUntil: s.phase === "playing" ? s.fogUntil : null,
+      autoStartAt: s.phase === "lobby" ? s.autoStartAt : null,
       players: this.state.players.map((p) => ({
         id: p.id,
         name: p.name,
@@ -1515,7 +1542,47 @@ export class Room extends DurableObject<Env> {
   }
 
   private broadcastLobby(ignore?: WebSocket) {
+    this.tunePublic();
     this.broadcast(this.lobbyMsg(ignore), ignore);
+  }
+
+  /**
+   * A public lobby keeps a start time: set when the first person arrives,
+   * nudged later when someone new arrives near the end, brought forward when
+   * the table is full. And the matchmaker hears how full the room is.
+   */
+  private publicSig = "";
+  private lastHere = 0;
+  private tunePublic() {
+    const s = this.state;
+    const now = Date.now();
+    const here = this.humans().filter((p) => this.isConnected(p.id)).length;
+    const open = s.settings.public && s.phase === "lobby" && s.created;
+    if (open && here > 0) {
+      if (!s.autoStartAt || !s.firstArrivalAt) {
+        s.firstArrivalAt = now;
+        s.autoStartAt = now + AUTO_START_MS;
+      } else if (here > this.lastHere && s.autoStartAt - now < AUTO_START_GRACE_MS) {
+        s.autoStartAt = Math.min(now + AUTO_START_GRACE_MS, s.firstArrivalAt + AUTO_START_MAX_MS);
+      }
+      if (s.players.length >= MAX_PLAYERS) s.autoStartAt = Math.min(s.autoStartAt, now + 5000);
+      this.dirty = true;
+      void this.scheduleAlarm();
+    } else if (s.autoStartAt || s.firstArrivalAt) {
+      s.autoStartAt = null;
+      s.firstArrivalAt = null;
+      this.dirty = true;
+    }
+    this.lastHere = here;
+
+    // Tell the matchmaker (only when something it cares about changed).
+    if (!this.env.MATCH || (!s.settings.public && !this.publicSig)) return;
+    const report = { code: s.code, open: !!open && s.players.length < MAX_PLAYERS, humans: here, players: s.players.length, startsAt: s.autoStartAt };
+    const sig = JSON.stringify(report);
+    if (sig === this.publicSig) return;
+    this.publicSig = report.open ? sig : "";
+    const mm = this.env.MATCH.get(this.env.MATCH.idFromName("global"));
+    this.ctx.waitUntil(mm.update(report).catch((e) => console.log("matchmaker not told:", String(e))));
   }
 
   private broadcast(msg: ServerMsg, ignore?: WebSocket) {
@@ -1551,6 +1618,7 @@ export class Room extends DurableObject<Env> {
     const s = this.state;
     const times: number[] = [];
     if (s.revealEndsAt) times.push(s.revealEndsAt);
+    if (s.phase === "lobby" && s.autoStartAt) times.push(s.autoStartAt);
     if (s.fogUntil) times.push(s.fogUntil);
     if (s.meeting) {
       times.push(s.meeting.stageEndsAt);

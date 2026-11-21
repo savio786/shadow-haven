@@ -105,9 +105,19 @@ export interface Settings {
   shades: number;       // 0 = pick for the table size; else 1–3 (capped by table size)
   meeting: MeetingPace; // how long the harbor talks and votes
   tasks: number;        // tasks each, TASKS_MIN–TASKS_MAX
+  public: boolean;      // open to anyone through Play now
 }
 
-export const DEFAULT_SETTINGS: Settings = { botLevel: "normal", auto: false, shades: 0, meeting: "normal", tasks: 5 };
+export const DEFAULT_SETTINGS: Settings = { botLevel: "normal", auto: false, shades: 0, meeting: "normal", tasks: 5, public: false };
+
+/** Public rooms start by themselves: this long after the first person arrives… */
+export const AUTO_START_MS = 40_000;
+/** …a little later if someone else arrives near the end… */
+export const AUTO_START_GRACE_MS = 12_000;
+/** …but never more than this after the first person arrived… */
+export const AUTO_START_MAX_MS = 90_000;
+/** …and seats left empty are filled with bots up to this many players. */
+export const AUTO_START_FILL = 6;
 export const TASKS_MIN = 3;
 export const TASKS_MAX = 6;
 
@@ -191,7 +201,7 @@ export type ClientMsg =
   | { t: "start" }
   | { t: "endGame" }
   | { t: "playAgain" }
-  | { t: "settings"; botLevel?: BotLevel; auto?: boolean; shades?: number; meeting?: MeetingPace; tasks?: number }
+  | { t: "settings"; botLevel?: BotLevel; auto?: boolean; shades?: number; meeting?: MeetingPace; tasks?: number; public?: boolean }
   | { t: "fog" }
   | { t: "relight" }
   | { t: "move"; to: string }
@@ -225,6 +235,7 @@ export type ServerMsg =
       now: number;                 // server clock, so timers line up
       settings: Settings;
       fogUntil: number | null;     // the fog is down until then (everyone knows)
+      autoStartAt: number | null;  // a public room starts by itself then
     }
   // Sent privately to one player. Never broadcast.
   | { t: "role"; role: Role; allies: string[] }

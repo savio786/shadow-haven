@@ -125,6 +125,12 @@ function initHome() {
     e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
   });
 
+  $("play-now").addEventListener("click", () => playNow());
+  refreshWaiting();
+  setInterval(() => { if (document.body.dataset.screen === "home" && document.visibilityState === "visible") refreshWaiting(); }, 20_000);
+  // The app's "Play now" shortcut.
+  if (new URLSearchParams(location.search).get("play") === "1" && store.get("sh.name")) setTimeout(playNow, 300);
+
   $("create").addEventListener("click", async () => {
     const name = readName();
     if (!name) return;
@@ -155,6 +161,40 @@ function initHome() {
     if (res.status === 429) return homeError("Lots of activity from your network — wait a moment and try again.");
     enterRoom(code);
   });
+}
+
+/** Play now: ask the matchmaker for a seat at an open table. */
+async function playNow() {
+  const name = readName();
+  if (!name) return;
+  const btn = $("play-now");
+  btn.disabled = true;
+  btn.textContent = "Finding a table…";
+  homeError("");
+  try {
+    const res = await fetch("/api/quick", { method: "POST" });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.text || "Couldn't find a table. Try again in a moment.");
+    enterRoom(body.code);
+  } catch (e) {
+    homeError(e.message === "Failed to fetch" ? "Can't reach the harbor. Check your connection." : e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Play now";
+  }
+}
+
+/** "3 people are waiting for a game" — a reason to tap Play now. */
+async function refreshWaiting() {
+  try {
+    const res = await fetch("/api/quick");
+    if (!res.ok) return;
+    const { waiting } = await res.json();
+    $("play-now-note").textContent = waiting > 0
+      ? `${waiting} ${waiting === 1 ? "person is" : "people are"} waiting at an open table right now.`
+      : "Join an open table — bots fill any empty seats.";
+    $("play-now-note").classList.toggle("live", waiting > 0);
+  } catch {}
 }
 
 function readName() {
@@ -836,10 +876,35 @@ function appendChat(line) {
     text.textContent = line.text;
     body.append(text);
     li.append(av, body);
+    li.dataset.who = line.who;
+    // People you'd rather not hear (strangers at open tables): mute them, just for you.
+    if (!p?.isBot && line.who !== me) {
+      const hush = document.createElement("button");
+      hush.type = "button";
+      hush.className = "hush";
+      hush.addEventListener("click", () => setHushed(line.who, !hushed().includes(line.who)));
+      li.append(hush);
+    }
+    paintHush(li);
   }
   const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
   list.append(li);
   if (atBottom || line.who === me) list.scrollTop = list.scrollHeight;
+}
+
+const hushed = () => store.get("sh.muted") || [];
+function setHushed(who, on) {
+  const list = hushed().filter((x) => x !== who);
+  if (on) list.push(who);
+  store.set("sh.muted", list.slice(-50));
+  for (const li of document.querySelectorAll(`#chat .line[data-who="${CSS.escape(who)}"]`)) paintHush(li);
+  toast(on ? `${nameOf(who)} is muted — only for you.` : `${nameOf(who)} is unmuted.`);
+}
+function paintHush(li) {
+  const on = hushed().includes(li.dataset.who);
+  li.classList.toggle("hushed", on);
+  const b = li.querySelector(".hush");
+  if (b) { b.textContent = on ? "Unmute" : "Mute"; b.setAttribute("aria-label", `${on ? "Unmute" : "Mute"} ${nameOf(li.dataset.who)}`); }
 }
 
 let typingWho = null;
@@ -1459,14 +1524,17 @@ function renderLobby() {
   for (let i = 0; i < emptyToShow; i++) {
     const li = document.createElement("li");
     li.className = "player empty";
-    li.innerHTML = `<span class="seat"></span><span class="player-name">${count + i < MIN_PLAYERS ? "Needed" : "Open seat"}</span>`;
+    li.innerHTML = `<span class="seat"></span><span class="player-name">${count + i < MIN_PLAYERS && !lobby.autoStartAt ? "Needed" : "Open seat"}</span>`;
     $("players").append(li);
   }
 
   const need = Math.max(0, MIN_PLAYERS - count);
-  $("lobby-status").textContent = need
-    ? `${count} of ${lobby.max} Keepers. Need ${need} more to start${isHost ? " — invite friends or add bots." : "."}`
-    : `${count} of ${lobby.max} Keepers aboard. ${lobby.shades === 1 ? "One Shade" : `${lobby.shades} Shades`} will hide among you.`;
+  const people = lobby.players.filter((p) => !p.isBot).length;
+  $("lobby-status").textContent = lobby.autoStartAt
+    ? `${people} ${people === 1 ? "person" : "people"} at this open table. Share the code to bring friends in too.`
+    : need
+      ? `${count} of ${lobby.max} Keepers. Need ${need} more to start${isHost ? " — invite friends or add bots." : "."}`
+      : `${count} of ${lobby.max} Keepers aboard. ${lobby.shades === 1 ? "One Shade" : `${lobby.shades} Shades`} will hide among you.`;
 
   $("host-controls").hidden = !isHost;
   renderLevel(isHost, lobby.players.some((p) => p.isBot));
@@ -1507,6 +1575,27 @@ function renderLevel(isHost, hasBots) {
 const PACE_NAME = { quick: "quick meetings", normal: "normal meetings", long: "long meetings" };
 const maxShades = (n) => Math.max(1, Math.min(3, Math.floor(n / 3)));
 
+/** A public table's countdown to starting by itself. */
+let autoStartTimer = null;
+function renderAutoStart() {
+  clearInterval(autoStartTimer);
+  const at = lobby?.phase === "lobby" ? lobby.autoStartAt : null;
+  $("auto-start").hidden = !at;
+  if (!at) return;
+  const need = Math.max(0, 6 - lobby.players.length);
+  $("auto-start-text").textContent = need
+    ? `More players may join. ${need} bot${need === 1 ? "" : "s"} will fill the empty seat${need === 1 ? "" : "s"}.`
+    : "More players may join until it starts.";
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((at - serverNow()) / 1000));
+    $("auto-start-secs").textContent = left;
+    $("auto-start").style.setProperty("--p", String(Math.min(1, left / 40)));
+    if (left <= 0) clearInterval(autoStartTimer);
+  };
+  tick();
+  autoStartTimer = setInterval(tick, 250);
+}
+
 /** The host's game settings: everyone sees them, only the host can change them. */
 function renderSettings(isHost) {
   const st = { shades: 0, meeting: "normal", tasks: 5, ...(lobby.settings ?? {}) };
@@ -1518,11 +1607,13 @@ function renderSettings(isHost) {
       b.disabled = !isHost || disable(b.dataset.value);
     }
   };
+  pick("set-public", !!st.public);
   pick("set-shades", st.shades, (v) => Number(v) > cap);
   pick("set-meeting", st.meeting);
   pick("set-tasks", st.tasks);
   const shades = lobby.shades;
-  $("settings-summary").textContent = `${shades} Shade${shades === 1 ? "" : "s"} · ${PACE_NAME[st.meeting]} · ${st.tasks} tasks each`;
+  $("settings-summary").textContent = `${st.public ? "Open · " : ""}${shades} Shade${shades === 1 ? "" : "s"} · ${PACE_NAME[st.meeting]} · ${st.tasks} tasks each`;
+  renderAutoStart();
   const notes = [];
   if (st.shades > cap) notes.push(`${st.shades} Shades needs ${st.shades * 3}+ players, so this table gets ${cap}.`);
   else if (isHost && cap < 3) notes.push(`${cap + 1} Shades needs ${(cap + 1) * 3}+ players.`);
@@ -1550,6 +1641,7 @@ function initLobby() {
   for (const b of document.querySelectorAll("#set-shades button")) b.addEventListener("click", () => send({ t: "settings", shades: Number(b.dataset.value) }));
   for (const b of document.querySelectorAll("#set-meeting button")) b.addEventListener("click", () => send({ t: "settings", meeting: b.dataset.value }));
   for (const b of document.querySelectorAll("#set-tasks button")) b.addEventListener("click", () => send({ t: "settings", tasks: Number(b.dataset.value) }));
+  for (const b of document.querySelectorAll("#set-public button")) b.addEventListener("click", () => send({ t: "settings", public: b.dataset.value === "true" }));
   $("start").addEventListener("click", () => send({ t: "start" }));
   const leave = () => {
     leaving = true;
