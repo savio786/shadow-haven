@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "Shadow Haven",
+  "short_name": "Shadow Haven",
+  "description": "Keep the harbor lights burning. One of you is a Shade.",
+  "start_url": "/?app=1",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#0e1220",
+  "theme_color": "#0e1220",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Play now", "short_name": "Play now", "url": "/?app=1&play=1", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

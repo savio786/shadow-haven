@@ -15,6 +15,9 @@
   Cache-Control: no-cache
   X-Robots-Tag: noindex
 
+/icons/*
+  Cache-Control: public, max-age=604800
+
 /*.js
   Cache-Control: public, max-age=300, must-revalidate
 

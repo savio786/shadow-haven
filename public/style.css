@@ -765,3 +765,25 @@ body.is-shade button.fog-btn:not(:disabled) { border-color: #9b7bff; color: #e3d
   .meeting.screen:has(#vote-wrap:not([hidden])) > #chat-wrap { grid-column: 2; margin-top: 0; }
   .meeting .chat { max-height: min(58vh, 520px); }
 }
+
+/* ---------- Installed app: full screen, around notches and rounded corners ---------- */
+body { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); overscroll-behavior-y: none; }
+button, a, input { touch-action: manipulation; }
+.mute { top: calc(8px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right)); }
+.banner { top: env(safe-area-inset-top); }
+.toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
+.screen { padding-bottom: calc(48px + env(safe-area-inset-bottom)); }
+.modal, .snuffed-overlay { padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+body.app { user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+body.app input, body.app textarea, body.app .chat { user-select: text; -webkit-user-select: text; }
+
+.install-card {
+  margin-top: 22px; display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 12px;
+  padding: 12px 10px 12px 12px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line); text-align: left;
+}
+.install-card[hidden] { display: none; }
+.install-card img { border-radius: 10px; display: block; }
+.install-title { margin: 0; font-weight: 600; }
+.install-card .small { margin: 2px 0 0; }
+.install-btn { padding: 8px 16px; background: var(--flame); color: #1d1406; border-color: var(--flame); font-weight: 600; }
+.install-close { width: 30px; height: 30px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 1.3rem; line-height: 1; }

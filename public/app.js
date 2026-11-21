@@ -59,6 +59,7 @@ const SCREENS = ["home", "lobby", "reveal", "game", "meeting", "over"];
 function show(screen) {
   for (const s of SCREENS) $(s).hidden = s !== screen;
   document.body.dataset.screen = screen;
+  keepAwake(IN_PLAY.has(screen));
 }
 
 function banner(text, withRetry = false) {
@@ -1598,6 +1599,63 @@ function route() {
   backHome();
 }
 
+// ---------- Installing as an app ----------
+const isApp = () =>
+  matchMedia("(display-mode: standalone)").matches || matchMedia("(display-mode: fullscreen)").matches || navigator.standalone === true;
+
+function initApp() {
+  if (isApp()) document.body.classList.add("app");
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+  }
+  const card = $("install-card");
+  const dismissedAt = store.get("sh.installDismissed") || 0;
+  const snoozed = Date.now() - dismissedAt < 14 * 86_400_000;
+  let deferred = null;
+  const offer = (text, button) => {
+    if (isApp() || snoozed) return;
+    $("install-text").textContent = text;
+    $("install-btn").hidden = !button;
+    card.hidden = false;
+  };
+  // Chrome, Edge, Samsung Internet, Android: a real install button.
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferred = e;
+    offer("One tap from your home screen, full screen, no browser bars.", true);
+  });
+  $("install-btn").addEventListener("click", async () => {
+    if (!deferred) return;
+    deferred.prompt();
+    const { outcome } = await deferred.userChoice.catch(() => ({ outcome: "dismissed" }));
+    deferred = null;
+    card.hidden = true;
+    if (outcome === "accepted") toast("Installed — look for the lantern on your home screen.");
+  });
+  window.addEventListener("appinstalled", () => { card.hidden = true; document.body.classList.add("installed"); });
+  $("install-close").addEventListener("click", () => { card.hidden = true; store.set("sh.installDismissed", Date.now()); });
+  // iPhone and iPad Safari have no install button: explain the two taps.
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (ios && !isApp()) offer("Tap the Share button, then “Add to Home Screen”.", false);
+}
+
+// Keep the screen awake while a game is on (phones dim and lock otherwise).
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on && !wakeLock && "wakeLock" in navigator && document.visibilityState === "visible") {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!on && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch { wakeLock = null; }
+}
+const IN_PLAY = new Set(["reveal", "game", "meeting"]);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") keepAwake(IN_PLAY.has(document.body.dataset.screen)); });
+
+initApp();
 initHome();
 initHowTo();
 initLobby();
